@@ -1,13 +1,13 @@
 # @title ActionFeedback, TetrisBoard, TetrisEnv, TetrisGameRecord, TetrominoPiece, Tetrominos
 
-import tensorflow as tf
+# debug_log_dir = "/content/drive/MyDrive/tensor-logs/debug-logs/"
+# tf.debugging.experimental.enable_dump_debug_info(debug_log_dir, tensor_debug_mode="FULL_HEALTH", circular_buffer_size=-1)
 
-debug_log_dir = "/content/drive/MyDrive/tensor-logs/debug-logs/"
-tf.debugging.experimental.enable_dump_debug_info(debug_log_dir, tensor_debug_mode="FULL_HEALTH", circular_buffer_size=-1)
 
 ##################
 # Environment Prep
 ##################
+'''
 import importlib, sys
 # if local_libs not in sys.path:
 #     sys.path = local_libs + sys.path
@@ -25,143 +25,61 @@ auto_pip(["gymnasium"])
 ######################
 # End environment prep
 ######################
+'''
+
 
 import gymnasium as gym
-from gym import spaces
+from gymnasium import spaces
 import numpy as np
+from numpy import ndarray as NDArray
 import pdb
 import time
+import sys
+import os
+import yaml
+from collections import deque
+import random
 
+WORKSPACE_ROOT = os.path.join(os.path.expanduser("~"), "source", "tetris-ml")
+
+os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+import tensorflow as tf
+
+# Verify TensorFlow is using CPU
+print("Num GPUs Available: ", len(tf.config.experimental.list_physical_devices('GPU')))
 
 
 """
 Episode = One tetris game
+mino = Tetromino
 """
 
 
-class ActionFeedback:
-    def __init__(self, valid_action=False):
-        # Does this action place the mino on or above the board, and not
-        # embedded in a wall, for example.
-        self.valid_action = valid_action
-        self.is_predict = False
+class TMLConfig(dict):
+    def __init__(self):
+        self.workspace_dir:str = os.path.normpath(WORKSPACE_ROOT)
+        self.storage_root:str = os.path.join(WORKSPACE_ROOT, "storage")
+        self.tensorboard_log_dir:str = os.path.join(self.storage_root, "tensor-logs")
 
-    def __str__(self):
-        return f"ActionFeedback(valid_action={self.valid_action}, is_predict={self.is_predict})"
+    def __setattr__(self, key, value):
+        """Class properties become dict key/value pairs"""
+        self[key] = value
+        super().__setattr__(key, value)
 
-class TetrominoPiece:
+    def __getattr__(self, key):
+        return self[key]
 
-    BLOCK = '▆'
+config = TMLConfig()
 
-    def __init__(self, shape:int, patterns):
-        self.shape:int = shape
-        self.pattern_list = patterns
-        self.pattern = patterns[0]
-        self.rot = 0
+# Load ../config.yaml
+config_path = os.path.join(os.getcwd(), "config.yaml")
+with open(config_path, 'r') as stream:
+    try:
+        config.update(yaml.safe_load(stream))
+    except yaml.YAMLError as exc:
+        print(exc)
 
-    def __str__(self) -> str:
-        return f"TetrominoPiece(shape={Tetrominos.shape_name(self.shape)}, rot={self.rot*90}, pattern= {self.printable_pattern(oneline=True)})"
 
-    def printable_pattern(self, oneline=False):
-        ret = []
-        pattern = self.get_pattern()
-        for i, row in enumerate(pattern):
-            row_str = " ".join([str(c) for c in row])
-            ret.append(row_str)
-
-            if not oneline:
-                ret.append("\n")
-            else:
-                if i < len(pattern)-1:
-                    ret.append(" / ",)
-        ret = "".join(ret).replace('1', TetrominoPiece.BLOCK).replace('0', '_')
-        return "".join(ret)
-
-    def to_dict(self):
-        return {
-            "shape": self.shape,
-            "pattern": self.pattern
-        }
-
-    def get_pattern(self):
-        return self.pattern
-
-    def rotate(self):
-        """Rotates IN PLACE, and returns the new pattern"""
-        self.rot = (self.rot + 1) % 4
-        self.pattern = self.pattern_list[self.rot]
-        return self.pattern
-
-    def get_height(self):
-        return len(self.get_pattern())
-
-    def get_width(self):
-        return max([len(x) for x in self.get_pattern()])
-
-    def get_bottom_offsets(self):
-        """
-        For each column in the shape, returns the gap between the bottom of
-        the shape (across all columns) and the bottom of the shape in that
-        column.
-
-        Returned values in the list would expect to contain at least one 0, and
-        no values higher than the height of the shape.
-
-        For example, an S piece:
-        _ X X
-        X X _
-
-        Would have offsets [0, 0, 1] in this current rotation. This method is
-        used in determining if a piece will fit at a certain position
-        in the board.
-        """
-        pattern = self.get_pattern()
-        # pdb.set_trace()
-        ret = [len(pattern)+1 for x in range(len(pattern[0]))]
-        # Iterates rows from top, down
-        for ri in range(len(pattern)):
-            # Given a T shape:
-            # X X X
-            # _ X _
-            # Start with row [X X X] (ri=0, offset=1)
-            row = pattern[ri]
-            # print(f"Testing row {row} at index {ri}")
-            for ci, col in enumerate(row):
-                if col == 1:
-                    offset = len(pattern) - ri - 1
-                    ret[ci] = offset
-
-            # Will return [1, 0, 1] for a T shape
-
-        if max(ret) >= len(pattern):
-          print(f"Pattern:")
-          print(pattern)
-          print(f"Bottom Offsets: {ret}")
-          print(f"Shape: {self.shape}")
-          raise ValueError("Tetromino pattern has incomplete bottom offsets")
-
-        return ret
-
-    def get_top_offsets(self):
-        """
-        Returns the height of the shape at each column.
-
-        For example, an S piece:
-        _ X X
-        X X _
-
-        Would have offsets [1, 2, 2] in this current rotation. This provides
-        guidance on how to update the headroom list.
-
-        Ideally we should cache this.
-        """
-        pattern = self.get_pattern()
-        ret = [0 for x in len(pattern[0])]
-        for ri, row in enumerate(range(pattern, )):
-            for col in pattern[row]:
-                if pattern[row][col] == 1:
-                    ret[col] = max(ret[col], row)
-        return ret
 
 
 class Tetrominos:
@@ -243,6 +161,222 @@ class Tetrominos:
 
         return TetrominoPiece(shape, Tetrominos.cache[shape])
 
+
+
+
+class ActionFeedback:
+    def __init__(self, valid_action=False):
+        # Does this action place the mino on or above the board, and not
+        # embedded in a wall, for example.
+        self.valid_action = valid_action
+        self.is_predict = False
+
+    def __str__(self):
+        return f"ActionFeedback(valid_action={self.valid_action}, is_predict={self.is_predict})"
+
+
+
+class TetrominoPiece:
+
+    BLOCK = '▆'
+
+    def __init__(self, shape:int, patterns):
+        self.shape:int = shape
+        self.pattern_list = patterns
+        self.pattern = patterns[0]
+        self.rot = 0
+
+    def __str__(self) -> str:
+        return f"TetrominoPiece(shape={Tetrominos.shape_name(self.shape)}, rot={self.rot*90}, pattern= {self.printable_pattern(oneline=True)})"
+
+    def printable_pattern(self, oneline=False):
+        ret = []
+        pattern = self.get_pattern()
+        for i, row in enumerate(pattern):
+            row_str = " ".join([str(c) for c in row])
+            ret.append(row_str)
+
+            if not oneline:
+                ret.append("\n")
+            else:
+                if i < len(pattern)-1:
+                    ret.append(" / ",)
+        ret = "".join(ret).replace('1', TetrominoPiece.BLOCK).replace('0', '_')
+        return "".join(ret)
+
+    def to_dict(self):
+        return {
+            "shape": self.shape,
+            "pattern": self.pattern
+        }
+
+    def get_pattern(self):
+        return self.pattern
+    
+    def get_shape(self, rot):
+        """
+        Returns the pattern for the specified rotation.
+
+        A 'Z' mino would return [[1,1,0],[0,1,1]] for rot=0
+        XX_
+        _XX
+        """
+        return self.pattern_list[rot]
+
+    def rotate(self):
+        """Rotates IN PLACE, and returns the new pattern"""
+        self.rot = (self.rot + 1) % 4
+        self.pattern = self.pattern_list[self.rot]
+        return self.pattern
+
+    def get_height(self, rot=None):
+        if rot:
+            return len(self.get_shape(rot))
+        else:
+            return len(self.get_pattern())
+
+    def get_width(self, rot=None):
+        if rot:
+            return len(self.get_shape(rot)[0])
+        else:
+            return max([len(x) for x in self.get_pattern()])
+
+    def get_bottom_offsets(self):
+        """
+        For each column in the shape, returns the gap between the bottom of
+        the shape (across all columns) and the bottom of the shape in that
+        column.
+
+        Returned values in the list would expect to contain at least one 0, and
+        no values higher than the height of the shape.
+
+        For example, an S piece:
+        _ X X
+        X X _
+
+        Would have offsets [0, 0, 1] in this current rotation. This method is
+        used in determining if a piece will fit at a certain position
+        in the board.
+        """
+        pattern = self.get_pattern()
+        # pdb.set_trace()
+        ret = [len(pattern)+1 for x in range(len(pattern[0]))]
+        # Iterates rows from top, down
+        for ri in range(len(pattern)):
+            # Given a T shape:
+            # X X X
+            # _ X _
+            # Start with row [X X X] (ri=0, offset=1)
+            row = pattern[ri]
+            # print(f"Testing row {row} at index {ri}")
+            for ci, col in enumerate(row):
+                if col == 1:
+                    offset = len(pattern) - ri - 1
+                    ret[ci] = offset
+
+            # Will return [1, 0, 1] for a T shape
+
+        if max(ret) >= len(pattern):
+          print(f"Pattern:")
+          print(pattern)
+          print(f"Bottom Offsets: {ret}")
+          print(f"Shape: {self.shape}")
+          raise ValueError("Tetromino pattern has incomplete bottom offsets")
+
+        return ret
+
+    def get_top_offsets(self):
+        """
+        Returns the height of the shape at each column.
+
+        For example, an S piece:
+        _ X X
+        X X _
+
+        Would have offsets [1, 2, 2] in this current rotation. This provides
+        guidance on how to update the headroom list.
+
+        Ideally we should cache this.
+        """
+        pattern = self.get_pattern()
+        ret = [0 for x in len(pattern[0])]
+        for ri, row in enumerate(range(pattern, )):
+            for col in pattern[row]:
+                if pattern[row][col] == 1:
+                    ret[col] = max(ret[col], row)
+        return ret
+
+
+class MinoShape:
+    """
+    A MinoShape is a single rotation of a Tetromino piece. It is a 2D array.
+    Importantly, this class is stateless.
+    """
+    def __init__(self, shape_id:int, rot:int):
+        self.shape = Tetrominos.cache[shape_id][rot]
+        self.shape_id = shape_id
+        self.rot = rot
+        self.height = len(self.shape)
+        self.width = len(self.shape[0])
+
+        # Private
+        self.__bottom_gaps = None
+
+    def __str__(self):
+        return f"MinoShape(shape={self.shape})"
+    
+    def get_piece(self)->TetrominoPiece:
+        """
+        Backtrack to the TetrominoPiece of this shape.
+        """
+        ret = TetrominoPiece(self.shape_id)
+        ret.rotate(self.rot)
+        return ret
+
+    def get_bottom_gaps(self):
+        """
+        For each column in the shape, returns the gap between the bottom of
+        the shape (across all columns) and the bottom of the shape in that
+        column.
+
+        Returned values in the list would expect to contain at least one 0, and
+        no values higher than the height of the shape.
+
+        For example, an S piece:
+        _ X X
+        X X _
+
+        Would have offsets [0, 0, 1] in this current rotation. This method is
+        used in determining if a piece will fit at a certain position
+        in the board.
+        """
+
+        if self.__bottom_gaps:
+            return self.__bottom_gaps
+
+        pattern = self.shape
+        ret = [len(pattern)+1 for x in range(len(pattern[0]))]
+        # Iterates rows from top, down
+        for ri in range(len(pattern)):
+            # Given a T shape:
+            # X X X
+            # _ X _
+            # Start with row [X X X] (ri=0, offset=1)
+            row = pattern[ri]
+            # print(f"Testing row {row} at index {ri}")
+            for ci, col in enumerate(row):
+                if col == 1:
+                    offset = len(pattern) - ri - 1
+                    ret[ci] = offset
+
+            # Will return [1, 0, 1] for a T shape
+
+        self.__bottom_gaps = ret
+
+        return self.__bottom_gaps
+
+
+
 Tetrominos.std_bag = [
     Tetrominos.O,
     Tetrominos.I,
@@ -261,7 +395,10 @@ class TetrisBoard:
         self.play_height = height
         self.height = len(matrix)
         self.width = len(matrix[0])
-        self.board = matrix
+        self.board:NDArray = matrix
+
+    def field_copy(self):
+        return self.board
 
     def reset(self):
         self.board.fill(0)
@@ -276,9 +413,18 @@ class TetrisBoard:
         if to_delete:
           self.board = np.delete(self.board, to_delete, axis=0)
           self.board.resize((self.height, self.width))
-          # pdb.set_trace()
 
         return len(to_delete)
+    
+    def place_mino(self, mino:TetrominoPiece, rot:int, logical_coords:tuple[int,int]):
+        """
+        A simple wrapper around place_piece, knowing that I want to make TetrominoPiece
+        stateless.
+        """
+        old_rot = mino.rot
+        mino.rot = rot
+        self.place_piece(mino, logical_coords)
+        mino.rot = old_rot
 
     def place_piece(self, piece:TetrominoPiece, logical_coords):
         """
@@ -716,13 +862,127 @@ class TetrisEnv(gym.Env):
         return self.state[np.newaxis, :, :]
 
 
+class MinoPlacement():
+    def __init__(self, 
+                 shape:MinoShape, 
+                 bl_coords:tuple[int, int],
+                 gaps_by_col:list[int]
+                 ) -> None:
+        self.shape = shape
+        self.bl_coords = bl_coords
+        self.reward:float = -float("inf")
+
+        # At which columns does the piece not sit flush?
+        # Field:      | Shape:
+        # X O O O     |    O O O
+        # X X O       |      O
+        # X X X       |
+        # The gaps are [0, 0, 2]
+        self.gaps:list[int] = gaps_by_col
+
+        # 0  = flush against the tower
+        # 1+ = This placement creates X gap tiles between 
+        # the piece and the tower
+        self.overhang:int = sum(self.gaps)
+
+
+def mcts():
+    env = TetrisEnv()
+    env.reset()
+    pass
+
+
+
+def find_possible_moves(env:TetrisEnv, mino:MinoShape, rotation:int):
+    """
+    Given a mino and a board, returns a list of possible moves for the mino.
+    """
+
+    board:TetrisBoard = env.board
+    field:NDArray = board.board
+    start_field = field.copy()
+
+    mino.rot = rotation
+
+    options = []
+
+    # This is gonna be inefficient for now
+
+    for c in range(board.width - mino.get_width()):
+        lcoords = board.find_logical_BL_placement(mino, c)
+
+        # Assume placement of Shape:
+        # Field:      | Shape:
+        # X O O O     |    O O O
+        # X X O       |      O
+        # X X X       |
+        # As shown at coords (2,2)
+        #
+        # Board height is               [3, 2, 1, 0, ...]
+        # Shape height (from bottom) is    [1, 0, 1]
+        # So I need to look for existing minos at:
+        #   (2, 2), (1, 3), (1, 4)
+        # or rather, direct board array locations:
+        #   (1, 1), (0, 2), (0, 3)
+
+        # ALL of this (except the line above) is operating in logical coordinates
+
+        gaps = mino.get_bottom_gaps()
+
+        # How many columns sit flush against the tower
+        flush_count = 0
+        flush_rows = []
+
+        # Is this placement flush against the tower?
+        for mc in range(mino.get_width()):
+
+            # For this column of the mino, the bottom gap is...
+            mino_col_offset = gaps[mc]
+
+            # The mino starts at col 2:
+            # 3 . O .
+            # 2 . X .
+            # 1 . X .
+            #   1 2 3
+            # On that column, we need to check height lcoords[1] - 1 + mino_col_offset
+
+            check_row = lcoords[0] - 1 + mc
+            check_col = lcoords[1] - 1 + mino_col_offset
+            
+            # Direct coords to check the playfield
+            if field[check_row - 1, check_col - 1] == 1:
+                flush_rows.append(1)
+
+        if flush_count == mino.get_width():
+            mino.is_flush = True
+
+        board.place_mino(mino, rotation, lcoords)
+        reward = env._calculate_reward()
+
+        options.append(MinoPlacement(mino, lcoords))
+
+
+        # Place the piece
+        # Calculate the reward
+        # Store the move
+        # Undo the move
+
+
+
+
+
+
+
+
+
+
+
 
 
 def main():
-
   # Example usage
   env = TetrisEnv()
-  env.piece_bag = [Tetrominos.USCORE]
+  env.piece_bag = Tetrominos.std_bag
   state = env.reset()
 
   done = False
@@ -742,11 +1002,13 @@ def main():
 
 # main()
 
+sys.exit()
 
-######################################################
-######################################################
-######################################################
 
+################################################################################
+################################################################################
+################################################################################
+################################################################################
 
 # @title DQNAgent, TetrisCNN
 #####################
@@ -758,6 +1020,10 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
+
+device = torch.device("cpu")
+print(f"Using device {device}")
+
 
 from typing import NewType
 ModelAction = NewType("ModelAction", tuple[int,int])
@@ -1084,9 +1350,12 @@ class DQNAgent:
 
 
 
-######################################################
-######################################################
-######################################################
+
+################################################################################
+################################################################################
+################################################################################
+################################################################################
+
 
 
 
@@ -1095,7 +1364,8 @@ import os
 # Change either of these values to reset the agent. Otherwise we will try
 # to keep the agent across multiple notebook cell runs.
 run_comment:str = "CNN-cpu-all-Os-datetime-test" # @param {type:"string"}
-persist_logs = False # @param {type:"boolean"}
+# persist_logs = False # @param {type:"boolean"}
+persist_logs = config.persist_logs
 
 show_board_before_running_model = False # @param {type:"boolean"}
 
@@ -1133,42 +1403,36 @@ log_dir = None
 if persist_logs:
     # YYMMDD-HHMMSS
     current_time = datetime.now().strftime('%y%m%d_%H%M%S')
-    log_dir = f'/content/drive/MyDrive/tensor-logs/runs/tetris/{current_time}-{run_comment}'
+    log_dir = os.path.join(config.tensorboard_log_dir, f'{current_time}-{run_comment}')
 agent = DQNAgent(input_channels, board_height, board_width, action_dim, log_dir=log_dir)
 
 
 
-if save_test:
-    agent.run(env, 10, train = True)
-    print(f"Replay buffer size: {len(agent.replay_buffer)}")
-    print(f"Exploration rate: {agent.exploration_rate}")
-    print(f"Agent episode count: {agent.agent_episode_count}")
-    agent.save_model("/content/drive/MyDrive/tensor-logs/models/test.pth")
+# if save_test:
+#     agent.run(env, 10, train = True)
+#     print(f"Replay buffer size: {len(agent.replay_buffer)}")
+#     print(f"Exploration rate: {agent.exploration_rate}")
+#     print(f"Agent episode count: {agent.agent_episode_count}")
+#     agent.save_model("/content/drive/MyDrive/tensor-logs/models/test.pth")
 
-else:
-
-
-    print(f"Replay buffer size: {len(agent.replay_buffer)}")
-    print(f"Exploration rate: {agent.exploration_rate}")
-    print(f"Agent episode count: {agent.agent_episode_count}")
-    print("--------------------------")
-    print("loading model")
-    agent.load_model("/content/drive/MyDrive/tensor-logs/models/test.pth")
-    print(f"Replay buffer size: {len(agent.replay_buffer)}")
-    print(f"Exploration rate: {agent.exploration_rate}")
-    print(f"Agent episode count: {agent.agent_episode_count}")
-
-sys.exit()
+# else:
 
 
+#     print(f"Replay buffer size: {len(agent.replay_buffer)}")
+#     print(f"Exploration rate: {agent.exploration_rate}")
+#     print(f"Agent episode count: {agent.agent_episode_count}")
+#     print("--------------------------")
+#     print("loading model")
+#     agent.load_model("/content/drive/MyDrive/tensor-logs/models/test.pth")
+#     print(f"Replay buffer size: {len(agent.replay_buffer)}")
+#     print(f"Exploration rate: {agent.exploration_rate}")
+#     print(f"Agent episode count: {agent.agent_episode_count}")
 
+# sys.exit()
 
-
-print(len(agent.replay_buffer))
-agent.load_model("/content/drive/MyDrive/tensor-logs/models/test.pth")
-sys.exit()
-
-
+# print(len(agent.replay_buffer))
+# agent.load_model("/content/drive/MyDrive/tensor-logs/models/test.pth")
+# sys.exit()
 
 num_episodes = 10
 target_update_interval = 10
@@ -1209,37 +1473,30 @@ def keep_training(agent):
     return True
 
 
-# agent.run(env, 5, train = True)
-# agent.save_model(f"{model_save_dir}/test.pth")
-
-# agent.load_model(f"{model_save_dir}/test.pth")
-
-sys.exit()
+agent.run(env, 5, train = True)
 
 save_interval = 500
-
-# while keep_training(agent):
-#    rewards = agent.run(env, 50, train = True)
-
-#    if agent.agent_episode_count % save_interval == 0:
-#         filename = f"tetris_ep{agent.agent_episode_count}.pth"
-#         full_path = os.path.join(model_save_dir, filename)
-#         torch.save(agent.model.state_dict(), full_path)
-#         print(f"Saved model to {full_path}")
-
 
 if keep_training(agent):
     print("Training FAILED")
 else:
     print("Training SUCCEEDED!!!!!")
-
-
-filename = f"tetris_ep{agent.agent_episode_count}_TRAINED.pth"
-full_path = os.path.join(model_save_dir, filename)
-torch.save(agent.model.state_dict(), full_path)
-print(f"Saved model to {full_path}")
+    print("Set an output path!!!!")
+    pdb.set_trace()
+    filename = f"tetris_ep{agent.agent_episode_count}_TRAINED.pth"
+    full_path = os.path.join(model_save_dir, filename)
+    torch.save(agent.model.state_dict(), full_path)
+    print(f"Saved model to {full_path}")
 
 
 
 
 # agent.train(env, 10)
+
+
+
+
+
+
+
+
