@@ -1,0 +1,8 @@
+/bin
+/include
+/lib
+/lib64
+/share
+/storage
+/tensor-out
+*.code-workspace
