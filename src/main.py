@@ -142,7 +142,7 @@ class Tetrominos:
             raise ValueError("Invalid shape")
 
     @staticmethod
-    def make(shape):
+    def make(shape, rot=0):
         """
         shape:
         """
@@ -159,7 +159,10 @@ class Tetrominos:
         if shape not in Tetrominos.base_patterns.keys():
             raise ValueError("Invalid shape")
 
-        return TetrominoPiece(shape, Tetrominos.cache[shape])
+        ret = TetrominoPiece(shape, Tetrominos.cache[shape])
+        for _ in range(rot):
+            ret.rotate()
+        return ret
 
 
 
@@ -310,12 +313,12 @@ class TetrominoPiece:
 class MinoShape:
     """
     A MinoShape is a single rotation of a Tetromino piece. It is a 2D array.
-    Importantly, this class is stateless.
+    Importantly, this class is meant to be immutable.
     """
     def __init__(self, shape_id:int, rot:int):
         self.shape = Tetrominos.cache[shape_id][rot]
         self.shape_id = shape_id
-        self.rot = rot
+        self.shape_rot = rot
         self.height = len(self.shape)
         self.width = len(self.shape[0])
 
@@ -329,8 +332,7 @@ class MinoShape:
         """
         Backtrack to the TetrominoPiece of this shape.
         """
-        ret = TetrominoPiece(self.shape_id)
-        ret.rotate(self.rot)
+        ret = Tetrominos.make(self.shape_id, self.shape_rot)
         return ret
 
     def get_bottom_gaps(self):
@@ -411,22 +413,37 @@ class TetrisBoard:
                 to_delete.append(r)
 
         if to_delete:
-          self.board = np.delete(self.board, to_delete, axis=0)
-          self.board.resize((self.height, self.width))
+          
+            # TODO Handle this more efficiently
+            # I believe BOTH of these operations make copies of the source data
+            self.board = np.delete(self.board, to_delete, axis=0)
+
+            try:
+                self.board.resize((self.height, self.width))
+                print("RESIZED BOARD SUCCESSFULLY")
+            except ValueError:
+                print("!!!!!!!!!! Exception while trying to resize board in place")
+                self.board = np.resize(self.board, (self.height, self.width))
 
         return len(to_delete)
     
-    def place_mino(self, mino:TetrominoPiece, rot:int, logical_coords:tuple[int,int]):
+
+    def place_shape(self, s:MinoShape, logical_coords:tuple[int,int]) -> list[NDArray]:
+        piece = s.get_piece()
+        return self.place_piece(piece, logical_coords)
+
+    def place_mino(self, mino:TetrominoPiece, rot:int, logical_coords:tuple[int,int]) -> list[NDArray]:
         """
         A simple wrapper around place_piece, knowing that I want to make TetrominoPiece
         stateless.
         """
         old_rot = mino.rot
         mino.rot = rot
-        self.place_piece(mino, logical_coords)
+        ret = self.place_piece(mino, logical_coords)
         mino.rot = old_rot
+        return ret
 
-    def place_piece(self, piece:TetrominoPiece, logical_coords):
+    def place_piece(self, piece:TetrominoPiece, logical_coords) -> list[NDArray]:
         """
         Places a piece at the specified column. Dynamically calculates correct
         height for the piece.
@@ -440,6 +457,9 @@ class TetrisBoard:
         lrow = logical_coords[0]
         lcol = logical_coords[1]
 
+        lr = logical_coords[0]
+        row_backups = [x.copy() for x in self.board[lr-1:lr-1+piece.get_height()]]
+
         p_height = piece.get_height()
 
         for r in range(p_height):
@@ -449,6 +469,10 @@ class TetrisBoard:
             for i, c in enumerate(pattern_row):
                 # Iff c is 1, push it to the board
                 board_row[lcol-1+i] |= c
+
+        return row_backups
+        
+
 
 
     def find_logical_BL_placement(self, piece:TetrominoPiece, col):
@@ -677,7 +701,10 @@ class TetrisEnv(gym.Env):
         self.record = TetrisGameRecord()
         return self._get_board_state()
 
-    def step(self, action):
+    def step(self, action:tuple[int,int]):
+        """
+        action: tuple of (column, rotation)
+        """
         # ([0-9], [0-3])
         col, rotation = action
         lcol = col + 1
@@ -709,8 +736,6 @@ class TetrisEnv(gym.Env):
 
             return self._get_board_state(), reward, done, info
 
-
-
         info.valid_action = True
         lcoords = None
 
@@ -735,9 +760,6 @@ class TetrisEnv(gym.Env):
             self.reward_history.append(reward)
 
             self.close_episode()
-
-            self.board.render()
-
 
             return self._get_board_state(), reward, done, info
 
@@ -854,23 +876,19 @@ class TetrisEnv(gym.Env):
         return reward
 
     def _get_board_state(self):
-
-        self.current_piece.get_pattern()
-        # TODO use relative coords
-        self.board.place_piece(self.current_piece, (21, 1))
-
         return self.state[np.newaxis, :, :]
 
 
 class MinoPlacement():
     def __init__(self, 
-                 shape:MinoShape, 
+                 shape:MinoShape,
                  bl_coords:tuple[int, int],
-                 gaps_by_col:list[int]
+                 gaps_by_col:list[int],
+                 reward:float
                  ) -> None:
         self.shape = shape
         self.bl_coords = bl_coords
-        self.reward:float = -float("inf")
+        self.reward:float = reward
 
         # At which columns does the piece not sit flush?
         # Field:      | Shape:
@@ -879,37 +897,25 @@ class MinoPlacement():
         # X X X       |
         # The gaps are [0, 0, 2]
         self.gaps:list[int] = gaps_by_col
-
-        # 0  = flush against the tower
-        # 1+ = This placement creates X gap tiles between 
-        # the piece and the tower
-        self.overhang:int = sum(self.gaps)
-
-
-def mcts():
-    env = TetrisEnv()
-    env.reset()
-    pass
+        self.empty_tiles_created = sum(self.gaps)
+        self.is_flush = self.empty_tiles_created == 0
 
 
 
-def find_possible_moves(env:TetrisEnv, mino:MinoShape, rotation:int):
+def find_possible_moves(env:TetrisEnv, s:MinoShape):
     """
     Given a mino and a board, returns a list of possible moves for the mino.
     """
 
     board:TetrisBoard = env.board
-    field:NDArray = board.board
-    start_field = field.copy()
-
-    mino.rot = rotation
 
     options = []
+    tower_heights = np.array(board.get_tops())
 
     # This is gonna be inefficient for now
 
-    for c in range(board.width - mino.get_width()):
-        lcoords = board.find_logical_BL_placement(mino, c)
+    for c in range(board.width - s.width + 1):
+        lcoords = board.find_logical_BL_placement(s.get_piece(), c)
 
         # Assume placement of Shape:
         # Field:      | Shape:
@@ -920,52 +926,78 @@ def find_possible_moves(env:TetrisEnv, mino:MinoShape, rotation:int):
         #
         # Board height is               [3, 2, 1, 0, ...]
         # Shape height (from bottom) is    [1, 0, 1]
-        # So I need to look for existing minos at:
-        #   (2, 2), (1, 3), (1, 4)
-        # or rather, direct board array locations:
-        #   (1, 1), (0, 2), (0, 3)
 
-        # ALL of this (except the line above) is operating in logical coordinates
+        # [1, 0, 1]
+        mino_col_heights = np.array(s.get_bottom_gaps())
+        # [2, 1, 0]
+        tower_col_heights = tower_heights[c:c+s.width]
 
-        gaps = mino.get_bottom_gaps()
-
-        # How many columns sit flush against the tower
-        flush_count = 0
-        flush_rows = []
-
-        # Is this placement flush against the tower?
-        for mc in range(mino.get_width()):
-
-            # For this column of the mino, the bottom gap is...
-            mino_col_offset = gaps[mc]
-
-            # The mino starts at col 2:
-            # 3 . O .
-            # 2 . X .
-            # 1 . X .
-            #   1 2 3
-            # On that column, we need to check height lcoords[1] - 1 + mino_col_offset
-
-            check_row = lcoords[0] - 1 + mc
-            check_col = lcoords[1] - 1 + mino_col_offset
-            
-            # Direct coords to check the playfield
-            if field[check_row - 1, check_col - 1] == 1:
-                flush_rows.append(1)
-
-        if flush_count == mino.get_width():
-            mino.is_flush = True
-
-        board.place_mino(mino, rotation, lcoords)
+        # The gap between the bottom of the mino and the tower
+        # [0, 0, 2]
+        gaps = mino_col_heights - 1 + lcoords[0] - tower_col_heights
+        
+        piece:TetrominoPiece = s.get_piece()
+        backup_rows = board.place_shape(s, lcoords)
         reward = env._calculate_reward()
 
-        options.append(MinoPlacement(mino, lcoords))
+        # Revert the board
+        for r in range(len(backup_rows)):
+            board.board[lcoords[0]-1+r] = backup_rows[r]
+
+        placement = MinoPlacement(s, lcoords, gaps, reward)
+        options.append(placement)
+
+    return options
 
 
-        # Place the piece
-        # Calculate the reward
-        # Store the move
-        # Undo the move
+import time
+
+def mcts():
+    env = TetrisEnv()
+    env.reset()
+
+
+    move = 0
+    while True:
+        move += 1
+        piece = env.current_piece
+        possibilities = []
+        # TODO: Some minos don't need four rotations
+        for i in range(4):
+            possibilities += (find_possible_moves(env, MinoShape(piece.shape, i)))
+        
+        possibilities = np.array(possibilities, dtype=MinoPlacement)
+
+        sorted_possibilities = sorted(possibilities, key=lambda x: x.reward - x.empty_tiles_created, reverse=True)
+        best_choice:MinoPlacement = sorted_possibilities[0]
+
+
+        env.step((best_choice.bl_coords[1]-1, best_choice.shape.shape_rot))
+        print("--------------------------")
+        print(f"Move {move}")
+        print(f"Best Choice: {best_choice}")
+        env.render()
+        print("--------------------------")
+
+
+        if env.board.board[-4:].any():
+            print("Game Over")
+            print(f"Final Reward: {env.record.cumulative_reward}")
+            print(f"Lines Cleared: {env.record.lines_cleared}")
+            print(f"Invalid Moves: {env.record.invalid_moves}")
+            print(f"Duration: {env.record.duration_ns / 1000000000}")
+            print(f"Moves: {env.record.moves}")
+
+            time.sleep(3)
+            env.reset()
+            
+
+
+
+
+mcts()
+
+sys.exit()
 
 
 
