@@ -413,20 +413,22 @@ class TetrisBoard:
                 to_delete.append(r)
 
         if to_delete:
-          
+
             # TODO Handle this more efficiently
             # I believe BOTH of these operations make copies of the source data
             self.board = np.delete(self.board, to_delete, axis=0)
 
-            try:
-                self.board.resize((self.height, self.width))
-                print("RESIZED BOARD SUCCESSFULLY")
-            except ValueError:
-                print("!!!!!!!!!! Exception while trying to resize board in place")
-                self.board = np.resize(self.board, (self.height, self.width))
+            # Odd workaround because vscode is messing with the memory management
+            # of numpy by holding a reference to the board, which prevents the
+            # resize in place.
+            refcheck = True  # This is the default
+            if "ISDEBUG" in os.environ.keys():
+                refcheck = False
+
+            self.board.resize((self.height, self.width), refcheck=refcheck)
 
         return len(to_delete)
-    
+
 
     def place_shape(self, s:MinoShape, logical_coords:tuple[int,int]) -> list[NDArray]:
         piece = s.get_piece()
