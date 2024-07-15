@@ -27,18 +27,21 @@ auto_pip(["gymnasium"])
 ######################
 '''
 
-
+import datetime
 import gymnasium as gym
-from gymnasium import spaces
+import json
 import numpy as np
-from numpy import ndarray as NDArray
+import os
 import pdb
 import time
-import sys
-import os
-import yaml
-from collections import deque
 import random
+import sys
+import yaml
+
+from collections import deque
+from gymnasium import spaces
+from numpy import ndarray as NDArray
+
 
 WORKSPACE_ROOT = os.path.join(os.path.expanduser("~"), "source", "tetris-ml")
 
@@ -149,10 +152,10 @@ class Tetrominos:
         if not Tetrominos.cache:
             for shape, pattern in Tetrominos.base_patterns.items():
                 Tetrominos.cache[shape] = [
-                    pattern,
-                    np.rot90(pattern),
-                    np.rot90(pattern, 2),
-                    np.rot90(pattern, 3)
+                    np.array(pattern),
+                    np.array(np.rot90(pattern)),
+                    np.array(np.rot90(pattern, 2)),
+                    np.array(np.rot90(pattern, 3))
                 ]
 
 
@@ -185,8 +188,8 @@ class TetrominoPiece:
 
     def __init__(self, shape:int, patterns):
         self.shape:int = shape
-        self.pattern_list = patterns
-        self.pattern = patterns[0]
+        self.pattern_list:list[NDArray] = patterns
+        self.pattern:NDArray = patterns[0]
         self.rot = 0
 
     def __str__(self) -> str:
@@ -210,12 +213,12 @@ class TetrominoPiece:
     def to_dict(self):
         return {
             "shape": self.shape,
-            "pattern": self.pattern
+            "pattern": self.pattern.tolist(),
         }
 
     def get_pattern(self):
         return self.pattern
-    
+
     def get_shape(self, rot):
         """
         Returns the pattern for the specified rotation.
@@ -323,11 +326,19 @@ class MinoShape:
         self.width = len(self.shape[0])
 
         # Private
-        self.__bottom_gaps = None
+        self._bottom_gaps = None
 
     def __str__(self):
         return f"MinoShape(shape={self.shape})"
-    
+
+    def to_jsonable(self):
+        return {
+            "id": self.shape_id,
+            "name": Tetrominos.shape_name(self.shape_id),
+            "rot": self.shape_rot,
+            "shape": self.shape.tolist()
+        }
+
     def get_piece(self)->TetrominoPiece:
         """
         Backtrack to the TetrominoPiece of this shape.
@@ -353,8 +364,8 @@ class MinoShape:
         in the board.
         """
 
-        if self.__bottom_gaps:
-            return self.__bottom_gaps
+        if self._bottom_gaps:
+            return self._bottom_gaps
 
         pattern = self.shape
         ret = [len(pattern)+1 for x in range(len(pattern[0]))]
@@ -373,9 +384,9 @@ class MinoShape:
 
             # Will return [1, 0, 1] for a T shape
 
-        self.__bottom_gaps = ret
+        self._bottom_gaps = ret
 
-        return self.__bottom_gaps
+        return self._bottom_gaps
 
 
 
@@ -398,9 +409,6 @@ class TetrisBoard:
         self.height = len(matrix)
         self.width = len(matrix[0])
         self.board:NDArray = matrix
-
-    def field_copy(self):
-        return self.board
 
     def reset(self):
         self.board.fill(0)
@@ -473,7 +481,7 @@ class TetrisBoard:
                 board_row[lcol-1+i] |= c
 
         return row_backups
-        
+
 
 
 
@@ -660,18 +668,36 @@ class TetrisGameRecord:
         }
         self.boards = []
         self.pieces = []
-        self.placements = []  # Logical coords of BL corner of piece pattern
+        self.placements = []
         self.rewards = []
-        self.outcome = []
+        self.outcomes = []
         self.cumulative_reward = 0
         self.is_predict = []
         self.episode_start_time = time.monotonic_ns()
         self.episode_end_time = None
         self.duration_ns = None
         self.agent_info = {}
-        self.logg = None
 
+    def to_jsonable(self):
+        # omitting boards
+        ret = {
+            "id": self.id,
+            "moves": self.moves,
+            "invalid_moves": self.invalid_moves,
+            "lines_cleared": self.lines_cleared,
+            "cleared_by_size": self.cleared_by_size,
+            "pieces": self.pieces,
+            "placements": self.placements,
+            "rewards": self.rewards,
+            "outcomes": self.outcomes,
+            "cumulative_reward": self.cumulative_reward,
+            "episode_start_time": self.episode_start_time,
+            "episode_end_time": self.episode_end_time,
+            "duration_ns": self.duration_ns,
+            "agent_info": self.agent_info
+        }
 
+        return ret
 
 class TetrisEnv(gym.Env):
     def __init__(self):
@@ -683,6 +709,9 @@ class TetrisEnv(gym.Env):
         self.reward_history = deque(maxlen=10)
         self.record = TetrisGameRecord()
         self.piece_bag = Tetrominos.std_bag
+        self.step_history:list[MinoPlacement] = []
+        self.random:random.Random = None
+        self.random_seed = None
 
         # Indexes  0-19 - The visible playfield
         #         20-23 - Buffer for the next piece to sit above the board
@@ -697,10 +726,22 @@ class TetrisEnv(gym.Env):
 
         self.reset()
 
-    def reset(self):
+    def reset(self, seed:int=None):
         self.board.reset()
+
+        self.seed = seed
+        if seed is None:
+            ts = datetime.now().timestamp()
+            self.random_seed = int(ts * 1000)
+
+        # We need reproducibility
+        # This seed only impacts random values generated from self.random.
+        # The global random module is not affected.
+        self.random = random.Random(self.random_seed)
+
         self.current_piece = self._get_random_piece()
         self.record = TetrisGameRecord()
+        self.step_history:list[MinoPlacement] = []
         return self._get_board_state()
 
     def step(self, action:tuple[int,int]):
@@ -750,6 +791,9 @@ class TetrisEnv(gym.Env):
         self.current_piece.rot = 0
 
 
+        self.record.placements.append(lcoords)
+
+
         # If any of the top four rows were used -- Game Over
         if np.any(self.board.board[-4:]):
             # Game Over
@@ -757,7 +801,6 @@ class TetrisEnv(gym.Env):
             reward = -1
 
             self.record.rewards.append(reward)
-            self.record.placements.append(None)
             self.record.cumulative_reward += reward
             self.reward_history.append(reward)
 
@@ -775,7 +818,6 @@ class TetrisEnv(gym.Env):
         done = False
 
         self.record.rewards.append(reward)
-        self.record.placements.append(lcoords)
         self.record.cumulative_reward += reward
         self.reward_history.append(reward)
 
@@ -882,7 +924,7 @@ class TetrisEnv(gym.Env):
 
 
 class MinoPlacement():
-    def __init__(self, 
+    def __init__(self,
                  shape:MinoShape,
                  bl_coords:tuple[int, int],
                  gaps_by_col:list[int],
@@ -902,6 +944,15 @@ class MinoPlacement():
         self.empty_tiles_created = sum(self.gaps)
         self.is_flush = self.empty_tiles_created == 0
 
+    def to_jsonable(self):
+        return {
+            "shape": self.shape.to_jsonable(),
+            "bl_coords": self.bl_coords,
+            "gaps": self.gaps,
+            "reward": self.reward,
+            "empty_tiles_created": self.empty_tiles_created,
+            "is_flush": self.is_flush
+        }
 
 
 def find_possible_moves(env:TetrisEnv, s:MinoShape):
@@ -937,7 +988,7 @@ def find_possible_moves(env:TetrisEnv, s:MinoShape):
         # The gap between the bottom of the mino and the tower
         # [0, 0, 2]
         gaps = mino_col_heights - 1 + lcoords[0] - tower_col_heights
-        
+
         piece:TetrominoPiece = s.get_piece()
         backup_rows = board.place_shape(s, lcoords)
         reward = env._calculate_reward()
@@ -946,71 +997,134 @@ def find_possible_moves(env:TetrisEnv, s:MinoShape):
         for r in range(len(backup_rows)):
             board.board[lcoords[0]-1+r] = backup_rows[r]
 
-        placement = MinoPlacement(s, lcoords, gaps, reward)
+        placement = MinoPlacement(s, lcoords, gaps.tolist(), reward)
         options.append(placement)
 
     return options
+
+class GameHistory:
+    def __init__(self):
+        self.timestamp = datetime.now()
+        self.unix_ts = self.timestamp.timestamp()
+        self.id = self.make_id()
+        self.seed:int = None
+        self.bag:list[str] = []
+        self.placements:list[MinoPlacement] = []
+        # Not including overflow
+        self.field_dims:tuple[int,int] = (20, 10)
+
+        # Probably not going to use this, but it's another
+        # data collector so let's hold onto it.
+        self.record:TetrisGameRecord = None
+
+    def make_id(self):
+        """
+        Produces IDs like 240714-beeeef
+        """
+        hexstr = '0123456789abcdef'
+        ret = ""
+        ret += self.timestamp.strftime("%y%m%d") + "-"
+        ret += ''.join([random.choice(hexstr) for x in range(6)])
+        return ret
+
+    def to_jsonable(self):
+        ret = {
+            "id": self.id,
+            "timestamp": self.timestamp.isoformat(),
+            "unix_ts": self.unix_ts,
+            "seed": self.seed,
+            "bag": self.bag,
+            "placements": [x.to_jsonable() for x in self.placements],
+            "field_dims": self.field_dims,
+            "record": self.record.to_jsonable() if self.record is not None else {}
+            }
+
+        return ret
 
 
 import time
 
 def mcts():
     env = TetrisEnv()
-    env.reset()
+    game_logs = []
+    file_ts = None
 
 
-    move = 0
-    while True:
-        move += 1
-        piece = env.current_piece
-        possibilities = []
-        # TODO: Some minos don't need four rotations
-        for i in range(4):
-            possibilities += (find_possible_moves(env, MinoShape(piece.shape, i)))
-        
-        possibilities = np.array(possibilities, dtype=MinoPlacement)
+    for _ in range(50):
+        env.reset()
+        history:GameHistory = GameHistory()
+        print(f"Starting game {history.id}")
+        history.seed = env.random_seed
+        history.bag = env.piece_bag
 
-        sorted_possibilities = sorted(possibilities, key=lambda x: x.reward - x.empty_tiles_created, reverse=True)
-        best_choice:MinoPlacement = sorted_possibilities[0]
+        move = 0
+        while True:
+            move += 1
+            piece = env.current_piece
+            possibilities = []
+            # TODO: Some minos don't need four rotations
+            for i in range(4):
+                possibilities += (find_possible_moves(env, MinoShape(piece.shape, i)))
 
+            possibilities = np.array(possibilities, dtype=MinoPlacement)
 
-        env.step((best_choice.bl_coords[1]-1, best_choice.shape.shape_rot))
-        print("--------------------------")
-        print(f"Move {move}")
-        print(f"Best Choice: {best_choice}")
-        env.render()
-        print("--------------------------")
+            sorted_possibilities = sorted(possibilities, key=lambda x: x.reward - x.empty_tiles_created, reverse=True)
+            best_choice:MinoPlacement = sorted_possibilities[0]
+            history.placements.append(best_choice)
 
-
-        if env.board.board[-4:].any():
-            print("Game Over")
-            print(f"Final Reward: {env.record.cumulative_reward}")
-            print(f"Lines Cleared: {env.record.lines_cleared}")
-            print(f"Invalid Moves: {env.record.invalid_moves}")
-            print(f"Duration: {env.record.duration_ns / 1000000000}")
-            print(f"Moves: {env.record.moves}")
-
-            time.sleep(3)
-            env.reset()
-            
+            env.step((best_choice.bl_coords[1]-1, best_choice.shape.shape_rot))
+            print("--------------------------")
+            print(f"Move {move}")
+            print(f"Best Choice: {best_choice}")
+            env.render()
+            print("--------------------------")
 
 
+            if env.board.board[-4:].any():
+                env.close_episode()
+                history.record = env.record
 
 
-mcts()
+                print("Game Over")
+                print(f"GAME ID: {history.id}")
+                print(f"Final Reward: {env.record.cumulative_reward}")
+                print(f"Lines Cleared: {env.record.lines_cleared}")
+                print(f"Invalid Moves: {env.record.invalid_moves}")
+                print(f"Clears by Size: {env.record.cleared_by_size}")
+                print(f"Duration: {env.record.duration_ns / 1000000000}")
+                print(f"Moves: {env.record.moves}")
+                print(f"Game Seed: {env.random_seed}")
 
-sys.exit()
+                if env.record.cleared_by_size[4] > 0:
+                    print("Tetris!!!!!!!!!!")
+                    print("Tetris!!!!!!!!!!")
+                    print("Tetris!!!!!!!!!!")
+                    print("Tetris!!!!!!!!!!")
+                    print("Tetris!!!!!!!!!!")
+                    # time.sleep(10)
+
+                # time.sleep(3)
+                break
+
+        game_logs.append(history)
+        if file_ts is None:
+            file_ts = history.timestamp.strftime("%y%m%d_%H%M%S")
+
+    save_game_logs(game_logs, f"game_logs_{file_ts}.json")
 
 
+def save_game_logs(game_logs:list[GameHistory], path:str="game_logs.json"):
+    ret = {"games": {}}
+
+    for game in game_logs:
+        ret["games"][game.id] = game.to_jsonable()
+
+    with open(path, "w") as outfile:
+        json.dump(ret, outfile, indent=4)
 
 
-
-
-
-
-
-
-
+# mcts()
+# sys.exit()
 
 
 def main():
@@ -1035,9 +1149,6 @@ def main():
 
 
 # main()
-
-sys.exit()
-
 
 ################################################################################
 ################################################################################
