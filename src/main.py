@@ -319,14 +319,14 @@ class MinoShape:
     Importantly, this class is meant to be immutable.
     """
     def __init__(self, shape_id:int, rot:int):
-        self.shape = Tetrominos.cache[shape_id][rot]
-        self.shape_id = shape_id
-        self.shape_rot = rot
-        self.height = len(self.shape)
-        self.width = len(self.shape[0])
+        self.shape:list[list[int]] = Tetrominos.cache[shape_id][rot]
+        self.shape_id:int = shape_id
+        self.shape_rot:int = rot
+        self.height:int = len(self.shape)
+        self.width:int = len(self.shape[0])
 
         # Private
-        self._bottom_gaps = None
+        self._bottom_gaps:list[int] = None
 
     def __str__(self):
         return f"MinoShape(shape={self.shape})"
@@ -453,7 +453,7 @@ class TetrisBoard:
         mino.rot = old_rot
         return ret
 
-    def place_piece(self, piece:TetrominoPiece, logical_coords) -> list[NDArray]:
+    def place_piece(self, piece:TetrominoPiece, logical_coords, alt_board=None) -> list[NDArray]:
         """
         Places a piece at the specified column. Dynamically calculates correct
         height for the piece.
@@ -461,20 +461,23 @@ class TetrisBoard:
         piece: a TetrominoPiece object
         logical_coords: The logical row and column for the bottom left
             of the piece's pattern
+        alt_board: An optional board to place the piece on. If not provided,
+            the board attribute is used.
         """
         pattern = piece.get_pattern()
+        board = self.board if alt_board is None else alt_board
 
         lrow = logical_coords[0]
         lcol = logical_coords[1]
 
         lr = logical_coords[0]
-        row_backups = [x.copy() for x in self.board[lr-1:lr-1+piece.get_height()]]
+        row_backups = [x.copy() for x in board[lr-1:lr-1+piece.get_height()]]
 
         p_height = piece.get_height()
 
         for r in range(p_height):
             pattern_row = pattern[len(pattern)-1-r]
-            board_row = self.board[lrow-1+r]
+            board_row = board[lrow-1+r]
 
             for i, c in enumerate(pattern_row):
                 # Iff c is 1, push it to the board
@@ -573,25 +576,25 @@ class TetrisBoard:
         return (place_row, col+1)
 
     @staticmethod
-    def render_state(board, pattern, bl_coords, color=True):
-        board = board.copy()
-
-        # Highlight tiles where the last piece was played
-        lrow, lcol = bl_coords
-
-        p_height = len(pattern)
+    def render_state(board, highlight_shape:MinoShape=None, highlight_bl_coords=None, color=True):
+        board = board.copy() 
         output = False
 
-        for r in range(p_height):
-            pattern_row = pattern[len(pattern)-1-r]
-            board_row = board[lrow-1+r]
+        if highlight_shape is not None and highlight_bl_coords is not None:
+            shape = highlight_shape.shape
+            p_height = len(shape)
+            lrow = highlight_bl_coords[0]
+            lcol = highlight_bl_coords[1]
 
-            for i, c in enumerate(pattern_row):
-                # Iff c is 1, push it to the board
-                if c == 1:
-                    board_row[lcol-1+i] = 2
+            for r in range(p_height):
+                pattern_row = shape[len(shape)-1-r]
+                board_row = board[lrow-1+r]
 
-        print(f"{(len(board) -i) % 10} ", end="")
+                for i, c in enumerate(pattern_row):
+                    # Iff c is 1, push it to the board
+                    if c == 1:
+                        board_row[lcol-1+i] = 2
+
         for i, row in enumerate(reversed(board)):
             if sum(row) == 0 and not output:
                 continue
@@ -606,6 +609,9 @@ class TetrisBoard:
                 else:
                     print('_', end=' ')
             print()
+        
+
+        print("=======================================")
 
 
     def render(self):
@@ -700,7 +706,8 @@ class TetrisGameRecord:
         return ret
 
 class TetrisEnv(gym.Env):
-    def __init__(self):
+
+    def __init__(self, piece_bag=None):
         super(TetrisEnv, self).__init__()
         self.board_height = 20
         self.board_width = 10
@@ -708,7 +715,7 @@ class TetrisEnv(gym.Env):
         self.pieces = Tetrominos()
         self.reward_history = deque(maxlen=10)
         self.record = TetrisGameRecord()
-        self.piece_bag = Tetrominos.std_bag
+        self.piece_bag = Tetrominos.std_bag if piece_bag is None else piece_bag
         self.step_history:list[MinoPlacement] = []
         self.random:random.Random = None
         self.random_seed = None
@@ -726,11 +733,15 @@ class TetrisEnv(gym.Env):
 
         self.reset()
 
+
+
     def reset(self, seed:int=None):
         self.board.reset()
 
-        self.seed = seed
-        if seed is None:
+        if seed is not None:
+            self.random_seed = seed
+
+        if self.random_seed is None:
             ts = datetime.now().timestamp()
             self.random_seed = int(ts * 1000)
 
@@ -808,11 +819,7 @@ class TetrisEnv(gym.Env):
 
             return self._get_board_state(), reward, done, info
 
-
-
         reward = self.board_height - lcoords[0]
-        print(f"Reward is {reward} for coords {lcoords}")
-
 
         # reward = self._calculate_reward()
         done = False
@@ -828,11 +835,6 @@ class TetrisEnv(gym.Env):
             self.record.cleared_by_size[lines_gone] += 1
 
         reward += lines_gone * 100
-
-        print(f"Reward is {reward} for coords {lcoords}")
-        if lines_gone > 0:
-            print(f"AND CLEARING {lines_gone} LINES")
-            print("----------------------")
 
         # Prep for next move
         self.current_piece = self._get_random_piece()
@@ -920,7 +922,16 @@ class TetrisEnv(gym.Env):
         return reward
 
     def _get_board_state(self):
-        return self.state[np.newaxis, :, :]
+        # Copy the board state
+        # INEFFICIENT!!!
+        state = self.board.board.copy()
+
+        # This is actually kind of nice. This way the current piece is only
+        # visible when generating the state for the model.
+        
+        # TODO Revisit this
+        self.board.place_piece(self.current_piece, (21, 1), state)
+        return state[np.newaxis, :, :]
 
 
 class MinoPlacement():
@@ -1224,6 +1235,10 @@ class ModelCheckpoint(dict):
         super().__setattr__(key, value)
 
 class DQNAgent:
+
+    MODE_UNSET = 0
+    MODE_EXPERT_LEARNING = 1
+
     def __init__(self, input_channels,
                  board_height,
                  board_width,
@@ -1251,6 +1266,7 @@ class DQNAgent:
         self.num_rotations = 4
         # Show board state just before sending to model
         self.see_model_view = False
+        self.mode = DQNAgent.MODE_UNSET
 
         self.board_height = board_height
         self.board_width = board_width
@@ -1384,15 +1400,31 @@ class DQNAgent:
             return action_index, True
 
 
-    def run(self, env, num_episodes=10, train=True):
+    def run(self, env:TetrisEnv, num_episodes=10, train=True, playback_list:list[GameHistory] = None):
         total_rewards = []
         target_update_interval = 10
 
+        playback = None
+
+        if playback_list is not None:
+            playback_itr = iter(playback_list)
+            playback = next(playback_itr)
+
         for episode in range(num_episodes):
             self.agent_episode_count += 1
+            # Capture the most recent game record.
+            # TODO But do we not capture the final record?
             if env.record.moves > 0:
                 self.game_records.append(env.record)
-            state = env.reset()
+
+            move_list:list[MinoPlacement] = None
+
+            if playback is not None:
+                state = env.reset(seed=playback.seed)
+                move_list = playback.placements
+            else:
+                state = env.reset()
+
             step_count = 0
             total_reward = 0
             done = False
@@ -1401,18 +1433,28 @@ class DQNAgent:
             while not done:
                 loss = None
 
-                if self.see_model_view:
-                    print("MODEL VIEW")
-                    env.board.render()
-                    print("---------------------")
-
                 if train:
                     action, is_prediction = self.choose_action(state)
                 else:
                     action = self.predict(state)
                     is_prediction = True
 
+
+                col, rot = action
+                planned_shape = MinoShape(env.current_piece.shape, rot)
+
+                # Apply the action, choose the next piece, etc
                 next_state, reward, done, info = env.step(action)
+
+                if info.valid_action:
+                    TetrisBoard.render_state(state[0], planned_shape, (21, col+1))
+                    TetrisBoard.render_state(next_state[0])
+                    print("Next state ^^^")
+                    print(f"Sum of state: {np.sum(state)}")
+                    print(f"Sum of next state: {np.sum(next_state)}")
+                    # time.sleep(0.2)
+
+
                 info.is_predict = is_prediction
                 env.record.is_predict.append(is_prediction)
                 step_count += 1
@@ -1442,7 +1484,8 @@ class DQNAgent:
             ainfo.exploration_rate = self.exploration_rate if train else 0
             env.record.agent_info = ainfo
 
-            if train:
+            if train and playback_list is None:
+                # If in playback mode, we'll set the exploration rate, later
                 self.decay_exploration_rate()
 
 
@@ -1501,9 +1544,6 @@ class DQNAgent:
 ################################################################################
 ################################################################################
 
-
-
-
 import os
 
 # Change either of these values to reset the agent. Otherwise we will try
@@ -1534,8 +1574,8 @@ save_test = False
 
 
 # Initialize Tetris environment
-env = TetrisEnv()
-env.piece_bag = [Tetrominos.O]
+env = TetrisEnv(piece_bag=[Tetrominos.O])
+
 
 input_channels = 1
 board_height = 24   # 20 for playfield, 4 for staging next piece
@@ -1607,6 +1647,11 @@ def keep_training(agent):
     criteria.append(avg_moves_per_game > 80)
     criteria.append(avg_invalid_move_pct < 1)
 
+    print(f"Evaluating hueristics over {len(records)} games")
+    print(f"Avg Line Clears: {avg_line_clears_per_game}")
+    print(f"Avg Moves: {avg_moves_per_game}")
+    print(f"Avg Invalid Move %: {avg_invalid_move_pct}")
+
     if np.all(criteria):
         return False
 
@@ -1618,20 +1663,22 @@ def keep_training(agent):
     return True
 
 
+
+training_data = json.load(open(config.workspace_dir + "/game_logs_240714_214823.json"))
+
+
 agent.run(env, 5, train = True)
 
 save_interval = 500
 
 if keep_training(agent):
-    print("Training FAILED")
+    agent.run(env, 500, train = True)
 else:
     print("Training SUCCEEDED!!!!!")
-    print("Set an output path!!!!")
-    pdb.set_trace()
-    filename = f"tetris_ep{agent.agent_episode_count}_TRAINED.pth"
-    full_path = os.path.join(model_save_dir, filename)
-    torch.save(agent.model.state_dict(), full_path)
-    print(f"Saved model to {full_path}")
+    # filename = f"tetris_ep{agent.agent_episode_count}_TRAINED.pth"
+    # full_path = os.path.join(model_save_dir, filename)
+    # torch.save(agent.model.state_dict(), full_path)
+    # print(f"Saved model to {full_path}")
 
 
 
