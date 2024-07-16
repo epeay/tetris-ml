@@ -1,58 +1,25 @@
-# @title ActionFeedback, TetrisBoard, TetrisEnv, TetrisGameRecord, TetrominoPiece, Tetrominos
-
-# debug_log_dir = "/content/drive/MyDrive/tensor-logs/debug-logs/"
-# tf.debugging.experimental.enable_dump_debug_info(debug_log_dir, tensor_debug_mode="FULL_HEALTH", circular_buffer_size=-1)
-
-
-##################
-# Environment Prep
-##################
-'''
-import importlib, sys
-# if local_libs not in sys.path:
-#     sys.path = local_libs + sys.path
-def auto_pip(libraries):
-    """ Invokes pip if needed. Saves time if not. """
-    import importlib
-    try:
-        for library in libraries:
-            importlib.import_module(library)
-    except ImportError:
-        !pip install {" ".join(libraries)}
-# avoids invoking pip unless we need it
-auto_pip(["gymnasium"])
-# Pull latest changes from local library
-######################
-# End environment prep
-######################
-'''
-
 import datetime
 import gymnasium as gym
 import json
 import numpy as np
 import os
+import sys
 import yaml
 
 from tetrisml import *
 from model import *
 
-
-WORKSPACE_ROOT = os.path.join(os.path.expanduser("~"), "source", "tetris-ml")
-
 os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 import tensorflow as tf
-
 # Verify TensorFlow is using CPU
 print("Num GPUs Available: ", len(tf.config.experimental.list_physical_devices('GPU')))
-
 
 """
 Episode = One tetris game
 mino = Tetromino
 """
 
-
+WORKSPACE_ROOT = os.path.join(os.path.expanduser("~"), "source", "tetris-ml")
 class TMLConfig(dict):
     def __init__(self):
         self.workspace_dir:str = os.path.normpath(WORKSPACE_ROOT)
@@ -67,24 +34,36 @@ class TMLConfig(dict):
     def __getattr__(self, key):
         return self[key]
 
-config = TMLConfig()
-
-# Load ../config.yaml
-config_path = os.path.join(os.getcwd(), "config.yaml")
-with open(config_path, 'r') as stream:
-    try:
-        config.update(yaml.safe_load(stream))
-    except yaml.YAMLError as exc:
-        print(exc)
 
 
-def mcts():
-    env = TetrisEnv()
-    game_logs = []
-    file_ts = None
+def load_config():
+    # Create workspace directory
+    config = TMLConfig()
+
+    # Load ../config.yaml
+    config_path = os.path.join(os.getcwd(), "config.yaml")
+    with open(config_path, 'r') as stream:
+        try:
+            config.update(yaml.safe_load(stream))
+        except yaml.YAMLError as exc:
+            print(exc)
 
 
-    for _ in range(50):
+    os.makedirs(config.workspace_dir, exist_ok=True)
+    os.makedirs(config.storage_root, exist_ok=True)
+    os.makedirs(config.tensorboard_log_dir, exist_ok=True)
+
+    return config
+
+
+config = load_config()
+game_logs:list[GameHistory] = []
+
+
+def mcts(game_logs:list[GameHistory]=None):
+    env = TetrisEnv([Tetrominos.O, Tetrominos.USCORE, Tetrominos.DOT])
+
+    for _ in range(5):
         env.reset()
         history:GameHistory = GameHistory()
         print(f"Starting game {history.id}")
@@ -96,17 +75,23 @@ def mcts():
             move += 1
             piece = env.current_piece
             possibilities = []
+            best_reward = -np.inf
             # TODO: Some minos don't need four rotations
             for i in range(4):
                 possibilities += (find_possible_moves(env, MinoShape(piece.shape, i)))
 
-            possibilities = np.array(possibilities, dtype=MinoPlacement)
+            highest_reward_choices = []
 
-            sorted_possibilities = sorted(possibilities, key=lambda x: x.reward - x.empty_tiles_created, reverse=True)
-            best_choice:MinoPlacement = sorted_possibilities[0]
-            history.placements.append(best_choice)
-
+            for p in possibilities:
+                if p.reward == best_reward:
+                    highest_reward_choices.append(p)
+                if p.reward > best_reward:
+                    best_reward = p.reward
+                    highest_reward_choices = [p]
+            
+            best_choice:MinoPlacement = np.random.choice(highest_reward_choices)
             env.step((best_choice.bl_coords[1]-1, best_choice.shape.shape_rot))
+            history.placements.append(best_choice)
             print("--------------------------")
             print(f"Move {move}")
             print(f"Best Choice: {best_choice}")
@@ -139,10 +124,8 @@ def mcts():
                 break
 
         game_logs.append(history)
-        if file_ts is None:
-            file_ts = history.timestamp.strftime("%y%m%d_%H%M%S")
 
-    save_game_logs(game_logs, f"game_logs_{file_ts}.json")
+
 
 
 def save_game_logs(game_logs:list[GameHistory], path:str="game_logs.json"):
@@ -151,12 +134,21 @@ def save_game_logs(game_logs:list[GameHistory], path:str="game_logs.json"):
     for game in game_logs:
         ret["games"][game.id] = game.to_jsonable()
 
+    print(f"Saving game logs to {path}")
     with open(path, "w") as outfile:
         json.dump(ret, outfile, indent=4)
 
 
-# mcts()
-# sys.exit()
+try:
+    mcts(game_logs=game_logs)
+except KeyboardInterrupt:
+    print("Keyboard interrupt. Saving game logs.")
+
+if len(game_logs) > 0:
+    file_ts = game_logs[0].timestamp.strftime("%y%m%d_%H%M%S")
+    save_game_logs(game_logs, f"game_logs_{file_ts}.json")
+
+sys.exit()
 
 
 def main():
@@ -179,33 +171,6 @@ def main():
 
   print(env.record.__dict__)
 
-
-# main()
-
-################################################################################
-################################################################################
-################################################################################
-################################################################################
-
-# @title DQNAgent, TetrisCNN
-#####################
-# Agent
-#
-
-import torch
-import torch.nn as nn
-import torch.optim as optim
-from torch.utils.tensorboard import SummaryWriter
-import random
-from collections import deque
-from datetime import datetime
-
-################################################################################
-################################################################################
-################################################################################
-################################################################################
-
-import os
 
 run_comment:str = "CNN-cpu-all-Os-datetime-test"
 persist_logs = config.persist_logs
