@@ -160,8 +160,8 @@ class TetrisEnv(gym.Env):
 
         # Prep for next move
         self.current_piece = self._get_random_piece()
-        next_state = self._get_board_state()
-        return next_state, reward, done, info
+        next_board_state = self._get_board_state()
+        return next_board_state, reward, done, info
 
 
     def close_episode(self):
@@ -243,16 +243,14 @@ class TetrisEnv(gym.Env):
         reward = line_score  # That's all for now
         return reward
 
-    def _get_board_state(self):
+    def _get_board_state(self) -> np.ndarray:
+        """
+        Returns a copy of the board state. Shape is (1, H, W)
+        """
         # Copy the board state
         # INEFFICIENT!!!
+        # TODO Do I still need to do this?
         state = self.board.board.copy()
-
-        # This is actually kind of nice. This way the current piece is only
-        # visible when generating the state for the model.
-        
-        # TODO Revisit this
-        self.board.place_piece(self.current_piece, (21, 1), state)
         return state[np.newaxis, :, :]
     
 

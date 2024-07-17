@@ -60,10 +60,10 @@ config = load_config()
 game_logs:list[GameHistory] = []
 
 
-def mcts(game_logs:list[GameHistory]=None):
+def mcts(episodes:int = 10, game_logs:list[GameHistory]=None):
     env = TetrisEnv([Tetrominos.O, Tetrominos.USCORE, Tetrominos.DOT])
 
-    for _ in range(5):
+    for _ in range(episodes):
         env.reset()
         history:GameHistory = GameHistory()
         print(f"Starting game {history.id}")
@@ -116,10 +116,6 @@ def mcts(game_logs:list[GameHistory]=None):
 
                 if env.record.cleared_by_size[4] > 0:
                     print("Tetris!!!!!!!!!!")
-                    print("Tetris!!!!!!!!!!")
-                    print("Tetris!!!!!!!!!!")
-                    print("Tetris!!!!!!!!!!")
-                    print("Tetris!!!!!!!!!!")
 
                 break
 
@@ -139,16 +135,11 @@ def save_game_logs(game_logs:list[GameHistory], path:str="game_logs.json"):
         json.dump(ret, outfile, indent=4)
 
 
-try:
-    mcts(game_logs=game_logs)
-except KeyboardInterrupt:
-    print("Keyboard interrupt. Saving game logs.")
+# mcts(50, game_logs=game_logs)
 
-if len(game_logs) > 0:
-    file_ts = game_logs[0].timestamp.strftime("%y%m%d_%H%M%S")
-    save_game_logs(game_logs, f"game_logs_{file_ts}.json")
-
-sys.exit()
+# if len(game_logs) > 0:
+#     file_ts = game_logs[0].timestamp.strftime("%y%m%d_%H%M%S")
+#     save_game_logs(game_logs, f"game_logs_{file_ts}.json")
 
 
 def main():
@@ -172,12 +163,10 @@ def main():
   print(env.record.__dict__)
 
 
-run_comment:str = "CNN-cpu-all-Os-datetime-test"
+run_comment:str = config.slug
 persist_logs = config.persist_logs
 
 show_board_before_running_model = False # @param {type:"boolean"}
-
-save_test = False
 
 # Initialize Tetris environment
 env = TetrisEnv(piece_bag=[Tetrominos.O])
@@ -187,7 +176,8 @@ input_channels = 1
 board_height = 24   # 20 for playfield, 4 for staging next piece
 board_width = 10
 action_dim = 40  # 4 rotations * 10 columns
-
+# A one-hot for the current piece
+linear_data_dim = Tetrominos.get_num_tetrominos()
 
 
 log_dir = None
@@ -195,7 +185,8 @@ if persist_logs:
     # YYMMDD-HHMMSS
     current_time = datetime.now().strftime('%y%m%d_%H%M%S')
     log_dir = os.path.join(config.tensorboard_log_dir, f'{current_time}-{run_comment}')
-agent = DQNAgent(input_channels, board_height, board_width, action_dim, log_dir=log_dir)
+
+agent = DQNAgent(input_channels, board_height, board_width, action_dim, linear_data_dim=linear_data_dim, log_dir=log_dir)
 
 
 
@@ -227,11 +218,6 @@ agent = DQNAgent(input_channels, board_height, board_width, action_dim, log_dir=
 
 num_episodes = 10
 target_update_interval = 10
-
-training_tracker = []
-
-model_save_dir = "/content/drive/MyDrive/tensor-logs/models"
-
 
 def keep_training(agent):
     """
@@ -270,15 +256,24 @@ def keep_training(agent):
 
 
 
-training_data = json.load(open(config.workspace_dir + "/game_logs_240714_214823.json"))
+playback = json.load(open(config.workspace_dir + "/game_logs_240715_232244_expert_ODU.json"))
+
+first_game = playback["games"][0]
+bag = first_game['bag']
+
+env = TetrisEnv(bag)
+
+for id, game in playback["games"].items():
 
 
-agent.run(env, 5, train = True)
+agent.run(TetrisEnv(first_game['bag']), )
 
-save_interval = 500
 
-if keep_training(agent):
-    agent.run(env, 500, train = True)
+
+
+agent.run(env, 10)
+while keep_training(agent):
+    agent.run(env, 100, train = True)
 else:
     print("Training SUCCEEDED!!!!!")
     # filename = f"tetris_ep{agent.agent_episode_count}_TRAINED.pth"

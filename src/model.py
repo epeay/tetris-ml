@@ -24,25 +24,101 @@ print(f"Using device {device}")
 from typing import NewType
 ModelAction = NewType("ModelAction", tuple[int,int])
 
+
+
+
+class ModelState():
+    def __init__(self, board:NDArray):
+
+        if len(board.shape) != 2:
+            raise ValueError("Board must be 2D")
+
+        self.board:NDArray = board
+        # One-hot encoding of the current mino
+        self.mino:NDArray = None
+
+    def set_mino_one_hot(self, total:int, index:int):
+        """
+        param index must be zero-indexed
+        """
+        self.mino = np.zeros(total)
+        self.mino[index] = 1
+
+    def to_dict(self):
+        return {
+            "board": self.board.tolist(),
+            "mino": self.mino.tolist()
+        }
+
+    def get_linear_data(self) -> list[int]:
+        if self.mino is None:
+            raise ValueError("Mino one-hot encoding not set")
+
+        return self.mino.tolist()
+
+    def to_tensor(self) -> torch.FloatTensor:
+        board_tensor = torch.FloatTensor(self.board)
+        linear_data_tensor = torch.FloatTensor(self.get_linear_data())
+        return board_tensor, linear_data_tensor
+
+    @staticmethod    
+    def from_dict(d:dict):
+        ret = ModelState(np.array(d["board"]))
+        ret.mino = np.array(d["mino"])
+        return ret
+
+
+
+
+
 class TetrisCNN(nn.Module):
-    def __init__(self, input_channels, board_height, board_width, action_dim):
+    def __init__(self, input_channels, board_height, board_width, action_dim, linear_layer_input_dim=0):
         """
         input_channels: 1
         board_height: 24
         board_width: 10
         action_dim: 40  (10 columns * 4 rotations)
         """
+
+        self.linear_layer_input_dim = linear_layer_input_dim
+
+
         super(TetrisCNN, self).__init__()
         self.conv1 = nn.Conv2d(input_channels, 32, kernel_size=3, stride=1, padding=1)
+
         self.conv2 = nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1)
-        self.fc1 = nn.Linear(64 * board_height * board_width, 128)  # Adjust based on input size
+
+        # Calculate the size of the flattened output from the CNN
+        conv_output_size = 64 * board_height * board_width
+        # linear_data_input_size = self.conv2.out_channels * linear_layer_input_dim
+
+        self.fc1 = nn.Linear(conv_output_size + linear_layer_input_dim, 128)  # Adjust based on input size
         self.fc2 = nn.Linear(128, action_dim)
 
-    def forward(self, x):
-        x = torch.relu(self.conv1(x))
-        x = torch.relu(self.conv2(x))
-        x = x.view(x.size(0), -1)  # Flatten the CNN output
-        x = torch.relu(self.fc1(x))
+    def forward(self, x_0, linear_layer_input=torch.tensor([])):
+        # Expects board input shape (batch_size, channels, height, width)
+
+        x_1 = torch.relu(self.conv1(x_0))
+        x_2 = torch.relu(self.conv2(x_1))
+        x = x_2.view(x_2.size(0), -1)  # Flatten the CNN output
+
+        # Scale up linear layer input to match batch size
+        if linear_layer_input.shape[0] != x.shape[0]:
+            linear_layer_input = linear_layer_input.expand(x.shape[0], -1)
+
+        # linear data should be shape (batch_size, linear_layer_input_dim)
+        if len(linear_layer_input.shape) == 3 and linear_layer_input.shape[0] == 1:
+            linear_layer_input = linear_layer_input.squeeze(1)
+
+
+        x = torch.cat((x, linear_layer_input), dim=1)
+
+        # x is now (64,15369)
+        # which is 
+
+        fc1_out = self.fc1(x)
+
+        x = torch.relu(fc1_out)
         return self.fc2(x)
 
 
@@ -81,6 +157,7 @@ class DQNAgent:
                  board_height,
                  board_width,
                  action_dim,
+                 linear_data_dim=0,
                  learning_rate=0.001,
                  discount_factor=0.99,
                  exploration_rate=1.0,
@@ -109,8 +186,8 @@ class DQNAgent:
         self.board_height = board_height
         self.board_width = board_width
 
-        self.model = TetrisCNN(input_channels, board_height, board_width, action_dim)
-        self.target_model = TetrisCNN(input_channels, board_height, board_width, action_dim)
+        self.model = TetrisCNN(input_channels, board_height, board_width, action_dim, linear_data_dim)
+        self.target_model = TetrisCNN(input_channels, board_height, board_width, action_dim, linear_data_dim)
         self.update_target_model()
 
         self.optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
@@ -211,8 +288,11 @@ class DQNAgent:
     def update_target_model(self):
         self.target_model.load_state_dict(self.model.state_dict())
 
-    def remember(self, state, action, reward, next_state, done):
-        self.replay_buffer.append((state, action, reward, next_state, done))
+    def remember(self, state:ModelState, action:ModelAction, reward, next_state:ModelState, done):
+        state_dict = state.to_dict()
+        next_state_dict = next_state.to_dict()
+
+        self.replay_buffer.append((state_dict, action, reward, next_state_dict, done))
 
     def guess(self):
         """
@@ -222,15 +302,23 @@ class DQNAgent:
         rotation = np.random.choice(4)
         return (col, rotation)
 
-    def predict(self, state) -> ModelAction:
-        if len(state.shape) == 3:
-            state = np.expand_dims(state, axis=0)  # Add batch dimension if not present
-        state = torch.FloatTensor(state)
-        q_values = self.model(state)
+    def predict(self, state:ModelState) -> ModelAction:
+        # (24, 10) -> (1, 1, 24, 10)
+        # For (batch_size, channels, height, width)
+        board = torch.FloatTensor(state.board)
+        while len(board.shape) < 4:
+            board = board.unsqueeze(0)
+
+        linear_data = torch.FloatTensor(state.get_linear_data())
+        # while len(linear_data.shape) < 3:
+        #     linear_data = linear_data.unsqueeze(0)
+
+        q_values = self.model(board, linear_data)
         action_index = torch.argmax(q_values).item()
         return (action_index // 4, action_index % 4)
 
-    def choose_action(self, state) -> tuple[ModelAction, bool]:
+    def choose_action(self, state:ModelState) -> tuple[ModelAction, bool]:
+
         if random.random() < self.exploration_rate:
             return self.guess(), False
         else:
@@ -258,10 +346,10 @@ class DQNAgent:
             move_list:list[MinoPlacement] = None
 
             if playback is not None:
-                state = env.reset(seed=playback.seed)
+                board = env.reset(seed=playback.seed)
                 move_list = playback.placements
             else:
-                state = env.reset()
+                board = env.reset()
 
             step_count = 0
             total_reward = 0
@@ -271,26 +359,31 @@ class DQNAgent:
             while not done:
                 loss = None
 
+                # Without a copy, the state changes before being printed
+                curr_state = ModelState(env.board.board.copy())
+                curr_state.set_mino_one_hot(Tetrominos.get_num_tetrominos(), env.current_piece.shape)
+
                 if train:
-                    action, is_prediction = self.choose_action(state)
+                    action, is_prediction = self.choose_action(curr_state)
                 else:
-                    action = self.predict(state)
+                    action = self.predict(curr_state)
                     is_prediction = True
 
 
                 col, rot = action
                 planned_shape = MinoShape(env.current_piece.shape, rot)
 
-                # Apply the action, choose the next piece, etc
-                next_state, reward, done, info = env.step(action)
+                # Do the thing. Apply the action, choose the next piece, etc
+                # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+                next_board_state, reward, done, info = env.step(action)
+                # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+                next_state = ModelState(next_board_state.squeeze(0))
+                next_state.set_mino_one_hot(Tetrominos.get_num_tetrominos(), env.current_piece.shape)
 
                 if info.valid_action:
-                    TetrisBoard.render_state(state[0], planned_shape, (21, col+1))
-                    TetrisBoard.render_state(next_state[0])
-                    print("Next state ^^^")
-                    print(f"Sum of state: {np.sum(state)}")
-                    print(f"Sum of next state: {np.sum(next_state)}")
-                    # time.sleep(0.2)
+                    TetrisBoard.render_state(curr_state.board, planned_shape, (21, col+1), title="Planned move")
+                    # TetrisBoard.render_state(next_state.board, title="Next State")
 
 
                 info.is_predict = is_prediction
@@ -305,10 +398,10 @@ class DQNAgent:
                     env.close_episode()
 
                 if train:
-                    self.remember(state, action, reward, next_state, done)
+                    self.remember(curr_state, action, reward, next_state, done)
                     loss = self.replay()
 
-                state = next_state
+                board = next_state
                 total_reward += reward
 
             ainfo = AgentGameInfo()
@@ -344,23 +437,39 @@ class DQNAgent:
         if len(self.replay_buffer) < self.batch_size:
             return
 
-        # pdb.set_trace()
-
         minibatch = random.sample(self.replay_buffer, self.batch_size)
-        states, actions, rewards, next_states, dones = zip(*minibatch)
+        composite_states, actions, rewards, composite_next_states, dones = zip(*minibatch)
+
+        # Parse states from dicts
+        composite_states = [ModelState.from_dict(s) for s in composite_states]
+        composite_next_states = [ModelState.from_dict(s) for s in composite_next_states]
+
+        # Unpack composite states
+        boards = [s.board for s in composite_states]
+        lds = [s.get_linear_data() for s in composite_states]
+        n_boards = [s.board for s in composite_next_states]
+        n_lds = [s.get_linear_data() for s in composite_next_states]
 
         # Ensure all states have consistent shapes
-        states = np.array(states)
-        next_states = np.array(next_states)
+        boards = np.array(boards)
+        lds = np.array(lds)
+        n_boards = np.array(n_boards)
+        n_lds = np.array(n_lds)
 
-        states = torch.FloatTensor(states)
-        next_states = torch.FloatTensor(next_states)
+        boards = torch.FloatTensor(boards)
+        lds = torch.FloatTensor(lds)
+        n_boards = torch.FloatTensor(n_boards)
+        n_lds = torch.FloatTensor(n_lds)
+
         actions = torch.LongTensor([a[0] * 4 + a[1] for a in actions])  # Ensure action is within valid range
         rewards = torch.FloatTensor(rewards)
         dones = torch.FloatTensor(dones)
 
-        current_q_values = self.model(states).gather(1, actions.unsqueeze(1)).squeeze(1)
-        max_next_q_values = self.target_model(next_states).max(1)[0]
+        boards = boards.unsqueeze(1) # Add channel dimension
+        n_boards = n_boards.unsqueeze(1)
+
+        current_q_values = self.model(boards, lds).gather(1, actions.unsqueeze(1)).unsqueeze(1)
+        max_next_q_values = self.target_model(n_boards, n_lds).max(1)[0]
         expected_q_values = rewards + (self.discount_factor * max_next_q_values * (1 - dones))
 
         loss = self.loss_fn(current_q_values, expected_q_values)
@@ -373,5 +482,7 @@ class DQNAgent:
 
     def decay_exploration_rate(self):
         self.exploration_rate = max(self.min_exploration_rate, self.exploration_rate * self.exploration_decay)
+
+
 
 

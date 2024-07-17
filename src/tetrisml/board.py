@@ -181,7 +181,7 @@ class TetrisBoard:
         return (place_row, col+1)
 
     @staticmethod
-    def render_state(board, highlight_shape:MinoShape=None, highlight_bl_coords=None, color=True):
+    def render_state(board, highlight_shape:MinoShape=None, highlight_bl_coords=None, color=True, title=None):
         board = board.copy() 
         output = False
 
@@ -200,11 +200,16 @@ class TetrisBoard:
                     if c == 1:
                         board_row[lcol-1+i] = 2
 
+        if title is not None:
+            print(f"== {title} ==")
+
         for i, row in enumerate(reversed(board)):
             if sum(row) == 0 and not output:
                 continue
             else:
                 output = True
+
+
 
             for cell in row:
                 if cell == 2:

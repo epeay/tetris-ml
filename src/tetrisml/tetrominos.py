@@ -5,15 +5,15 @@ from numpy import ndarray as NDArray
 
 
 class Tetrominos:
-    O = 1
-    I = 2
-    S = 3
-    Z = 4
-    T = 5
-    J = 6
-    L = 7
-    DOT = 8
-    USCORE = 9
+    O = 0
+    I = 1
+    S = 2
+    Z = 3
+    T = 4
+    J = 5
+    L = 6
+    DOT = 7
+    USCORE = 8
 
     base_patterns = {
         # X X
@@ -37,7 +37,7 @@ class Tetrominos:
     # Stores patterns for each tetromino, at each rotation
     cache = {}
 
-    def num_tetrominos():
+    def get_num_tetrominos():
         return len(Tetrominos.base_patterns.keys())
 
     @staticmethod
