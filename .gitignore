@@ -11,3 +11,6 @@
 **.pyc
 /tetris.ipynb
 /config.yaml
+/etc/
+*.png
+/keep**

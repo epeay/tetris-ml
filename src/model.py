@@ -24,9 +24,6 @@ print(f"Using device {device}")
 from typing import NewType
 ModelAction = NewType("ModelAction", tuple[int,int])
 
-
-
-
 class ModelState():
     def __init__(self, board:NDArray):
 
@@ -186,8 +183,8 @@ class DQNAgent:
         self.board_height = board_height
         self.board_width = board_width
 
-        self.model = TetrisCNN(input_channels, board_height, board_width, action_dim, linear_data_dim)
-        self.target_model = TetrisCNN(input_channels, board_height, board_width, action_dim, linear_data_dim)
+        self.model = TetrisCNN(input_channels, board_height + 4, board_width, action_dim, linear_data_dim)
+        self.target_model = TetrisCNN(input_channels, board_height + 4, board_width, action_dim, linear_data_dim)
         self.update_target_model()
 
         self.optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
@@ -294,6 +291,13 @@ class DQNAgent:
 
         self.replay_buffer.append((state_dict, action, reward, next_state_dict, done))
 
+        # if len(self.replay_buffer) == 50:
+        #     visualize_multiple_boards([r[0]["board"] for r in self.replay_buffer], filename="Replay Buffer.png")
+        #     visualize_multiple_boards([r[3]["board"] for r in self.replay_buffer], filename="Replay Buffer Next State.png")
+        #     import sys
+        #     sys.exit()
+
+
     def guess(self):
         """
         Generates a random action based on the action dimensions.
@@ -326,71 +330,102 @@ class DQNAgent:
             return action_index, True
 
 
-    def run(self, env:TetrisEnv, num_episodes=10, train=True, playback_list:list[GameHistory] = None):
+    def run(self, env:TetrisEnv, num_episodes=10, train=True, playback_list:list[GameHistory] = []):
         total_rewards = []
         target_update_interval = 10
 
         playback = None
+        playback_itr = iter(playback_list)
 
-        if playback_list is not None:
-            playback_itr = iter(playback_list)
-            playback = next(playback_itr)
+        is_playback = len(playback_list) > 0
+        if is_playback and num_episodes != len(playback_list):
+            print("WARN: num_episodes ignored when using playback_list")
+            num_episodes = len(playback_list)
 
         for episode in range(num_episodes):
+            playback = next(playback_itr, None)
             self.agent_episode_count += 1
+
             # Capture the most recent game record.
             # TODO But do we not capture the final record?
             if env.record.moves > 0:
                 self.game_records.append(env.record)
 
-            move_list:list[MinoPlacement] = None
+            move_list:list[MinoPlacement] = []
 
-            if playback is not None:
+
+            if is_playback:
                 board = env.reset(seed=playback.seed)
                 move_list = playback.placements
             else:
                 board = env.reset()
 
+            move_itr = iter(move_list)
             step_count = 0
             total_reward = 0
             done = False
             loss = None
 
+            # Also iterates after step()
+            placement = next(move_itr, None)
+
             while not done:
                 loss = None
+                planned_shape = None
 
                 # Without a copy, the state changes before being printed
                 curr_state = ModelState(env.board.board.copy())
                 curr_state.set_mino_one_hot(Tetrominos.get_num_tetrominos(), env.current_piece.shape)
 
-                if train:
-                    action, is_prediction = self.choose_action(curr_state)
+                if is_playback:
+                    if placement.shape.shape_id != env.current_piece.shape:
+                        print("Mismatched shapes")
+                        print(f"Expected {env.current_piece.shape} but got {placement.shape.shape_id}")
+                        print(f"Planned move: {placement.shape}")
+                        print(f"Current piece: {env.current_piece}")
+                        raise ValueError("Mismatched shapes")
+
+                    action = (placement.bl_coords[1]-1, placement.shape.shape_rot)
+                    planned_shape = placement.shape
+                    is_prediction = False
                 else:
-                    action = self.predict(curr_state)
-                    is_prediction = True
+                    if train:
+                        action, is_prediction = self.choose_action(curr_state)
+                    else:
+                        action = self.predict(curr_state)
+                        is_prediction = True
+                    
+                    planned_shape = MinoShape(env.current_piece.shape, action[1])
 
-
-                col, rot = action
-                planned_shape = MinoShape(env.current_piece.shape, rot)
+                col, _ = action
 
                 # Do the thing. Apply the action, choose the next piece, etc
                 # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
                 next_board_state, reward, done, info = env.step(action)
                 # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+                print(".", end='')
 
                 next_state = ModelState(next_board_state.squeeze(0))
                 next_state.set_mino_one_hot(Tetrominos.get_num_tetrominos(), env.current_piece.shape)
 
-                if info.valid_action:
-                    TetrisBoard.render_state(curr_state.board, planned_shape, (21, col+1), title="Planned move")
-                    # TetrisBoard.render_state(next_state.board, title="Next State")
+                # if info.valid_action:
+                #     TetrisBoard.render_state(curr_state.board, planned_shape, (21, col+1), title="Planned move")
 
 
                 info.is_predict = is_prediction
                 env.record.is_predict.append(is_prediction)
                 step_count += 1
 
-                if env.record.moves >= 100:
+                # Stage the next placement so we can peek at it.
+                next_placement = next(move_itr, None)
+
+                if not done and is_playback and next_placement is None:
+                    # The playback has ended. We're done whether or 
+                    # not the game is over.
+                    done = True
+
+                # Enforce move limit unless we're in playback mode
+                if env.record.moves >= 100 and not is_playback:
                     print("Hit move cap")
                     done = True
 
@@ -400,6 +435,10 @@ class DQNAgent:
                 if train:
                     self.remember(curr_state, action, reward, next_state, done)
                     loss = self.replay()
+
+                # Prep for next turn
+                placement = next_placement
+                next_placement = None
 
                 board = next_state
                 total_reward += reward
@@ -415,7 +454,7 @@ class DQNAgent:
             ainfo.exploration_rate = self.exploration_rate if train else 0
             env.record.agent_info = ainfo
 
-            if train and playback_list is None:
+            if train and not is_playback:
                 # If in playback mode, we'll set the exploration rate, later
                 self.decay_exploration_rate()
 
@@ -427,8 +466,9 @@ class DQNAgent:
             self.log_game_record(record)
             total_rewards.append(total_reward)
 
-            if train and episode % target_update_interval == 0:
+            if train and (episode % target_update_interval == 0):
                 self.update_target_model()
+                print("Updated target model")
 
         return total_rewards
 

@@ -181,7 +181,7 @@ class TetrisBoard:
         return (place_row, col+1)
 
     @staticmethod
-    def render_state(board, highlight_shape:MinoShape=None, highlight_bl_coords=None, color=True, title=None):
+    def render_state(board, highlight_shape:MinoShape=None, highlight_bl_coords=None, color=True, title=""):
         board = board.copy() 
         output = False
 

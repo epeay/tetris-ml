@@ -27,6 +27,11 @@ class MinoShape:
             "rot": self.shape_rot,
             "shape": self.shape.tolist()
         }
+    
+    @staticmethod
+    def from_jsonable(data:dict):
+        return MinoShape(data["id"], data["rot"])
+
 
     def get_piece(self)->TetrominoPiece:
         """
@@ -112,6 +117,16 @@ class MinoPlacement():
             "empty_tiles_created": self.empty_tiles_created,
             "is_flush": self.is_flush
         }
+    
+    @staticmethod
+    def from_jsonable(data:dict):
+        shape = MinoShape.from_jsonable(data["shape"])
+        return MinoPlacement(
+            shape, 
+            data["bl_coords"], 
+            data["gaps"], 
+            data["reward"]
+            )
 
 
 

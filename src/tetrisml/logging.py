@@ -50,6 +50,25 @@ class TetrisGameRecord:
         }
 
         return ret
+    
+    @staticmethod
+    def from_jsonable(obj):
+        ret = TetrisGameRecord()
+        ret.id = obj["id"]
+        ret.moves = obj["moves"]
+        ret.invalid_moves = obj["invalid_moves"]
+        ret.lines_cleared = obj["lines_cleared"]
+        ret.cleared_by_size = obj["cleared_by_size"]
+        ret.pieces = obj["pieces"]
+        ret.placements = obj["placements"]
+        ret.rewards = obj["rewards"]
+        ret.outcomes = obj["outcomes"]
+        ret.cumulative_reward = obj["cumulative_reward"]
+        ret.episode_start_time = obj["episode_start_time"]
+        ret.episode_end_time = obj["episode_end_time"]
+        ret.duration_ns = obj["duration_ns"]
+        ret.agent_info = obj["agent_info"]
+        return ret
 
 
 
@@ -93,5 +112,19 @@ class GameHistory:
             "record": self.record.to_jsonable() if self.record is not None else {}
             }
 
+        return ret
+    
+
+    @staticmethod
+    def from_jsonable(obj):
+        ret = GameHistory()
+        ret.id = obj["id"]
+        ret.timestamp = datetime.fromisoformat(obj["timestamp"])
+        ret.unix_ts = obj["unix_ts"]
+        ret.seed = obj["seed"]
+        ret.bag = obj["bag"]
+        ret.placements = [MinoPlacement.from_jsonable(x) for x in obj["placements"]]
+        ret.field_dims = obj["field_dims"]
+        ret.record = TetrisGameRecord.from_jsonable(obj["record"])
         return ret
 

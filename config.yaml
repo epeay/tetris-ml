@@ -1,2 +1,2 @@
-persist_logs: false
-slug: "debugging-state"
+persist_logs: true
+slug: "smoltris-1000"

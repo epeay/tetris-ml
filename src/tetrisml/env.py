@@ -29,10 +29,10 @@ class ActionFeedback:
 
 class TetrisEnv(gym.Env):
 
-    def __init__(self, piece_bag=None):
+    def __init__(self, piece_bag=None, board_height=20, board_width=10):
         super(TetrisEnv, self).__init__()
-        self.board_height = 20
-        self.board_width = 10
+        self.board_height = board_height
+        self.board_width = board_width
         self.current_piece = None
         self.pieces = Tetrominos()
         self.reward_history = deque(maxlen=10)
@@ -47,8 +47,9 @@ class TetrisEnv(gym.Env):
         self.state = np.zeros((self.board_height + 4, self.board_width), dtype=int)
 
         # Creates a *view* from the larger state
-        self.current_piece_rows = self.state[20:24]
-        self.board = TetrisBoard(self.state, 20)
+        # of all but the top four rows
+        self.current_piece_rows = self.state[:-4]
+        self.board = TetrisBoard(self.state, self.board_height - 4)
 
         # Action space: tuple (column, rotation)
         self.action_space = spaces.MultiDiscrete([self.board_width, 4])
@@ -62,8 +63,7 @@ class TetrisEnv(gym.Env):
 
         if seed is not None:
             self.random_seed = seed
-
-        if self.random_seed is None:
+        else:
             ts = datetime.now().timestamp()
             self.random_seed = int(ts * 1000)
 
@@ -79,7 +79,7 @@ class TetrisEnv(gym.Env):
 
     def step(self, action:tuple[int,int]):
         """
-        action: tuple of (column, rotation)
+        action: zero-indexed tuple of (column, rotation)
         """
         # ([0-9], [0-3])
         col, rotation = action
@@ -141,9 +141,9 @@ class TetrisEnv(gym.Env):
 
             return self._get_board_state(), reward, done, info
 
-        reward = self.board_height - lcoords[0]
+        # reward = self.board_height - lcoords[0]
 
-        # reward = self._calculate_reward()
+        reward = self._calculate_reward()
         done = False
 
         self.record.rewards.append(reward)
@@ -182,7 +182,7 @@ class TetrisEnv(gym.Env):
         self.board.render()
 
     def _get_random_piece(self):
-        return self.pieces.make(random.choice(self.piece_bag))
+        return self.pieces.make(self.random.choice(self.piece_bag))
 
     def _is_valid_action(self, piece, lcol):
         piece = self.current_piece
