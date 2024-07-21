@@ -1,15 +1,18 @@
 import datetime
-import gymnasium as gym
 import json
 import numpy as np
 import os
 import sys
 import yaml
 
+import matplotlib.pyplot as plt
+
 
 from tetrisml import *
 from model import *
+from tetrisml.gamesets import GameRuns
 import utils
+from cheating import *
 
 os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 import tensorflow as tf
@@ -22,8 +25,11 @@ mino = Tetromino
 """
 
 
+# ../
+WORKSPACE_ROOT = os.path.dirname(os.path.realpath(__file__))
+WORKSPACE_ROOT = os.path.abspath(os.path.join(WORKSPACE_ROOT, ".."))
 
-WORKSPACE_ROOT = os.path.join(os.path.expanduser("~"), "source", "tetris-ml")
+
 class TMLConfig(dict):
     """
     These attributes don't actually get set on the class, but are stored in the 
@@ -36,6 +42,7 @@ class TMLConfig(dict):
         self.workspace_dir:str = os.path.normpath(WORKSPACE_ROOT)
         self.storage_root:str = os.path.join(WORKSPACE_ROOT, "storage")
         self.tensorboard_log_dir:str = os.path.join(self.storage_root, "tensor-logs")
+        self.model_storage_dir:str = os.path.join(self.storage_root, "models")
         self.persist_logs:bool = False
         self.git_short:str = utils.get_git_hash()
         
@@ -65,18 +72,14 @@ def load_config():
     os.makedirs(config.workspace_dir, exist_ok=True)
     os.makedirs(config.storage_root, exist_ok=True)
     os.makedirs(config.tensorboard_log_dir, exist_ok=True)
+    os.makedirs(config.model_storage_dir, exist_ok=True)
 
     return config
 
-
 config = load_config()
-
-
 game_logs:list[GameHistory] = []
 
-
-def mcts(episodes:int = 10, game_logs:list[GameHistory]=None):
-    env = TetrisEnv([Tetrominos.O, Tetrominos.USCORE, Tetrominos.DOT])
+def mcts(env:TetrisEnv, episodes:int = 10, game_logs:list[GameHistory]=None):
 
     for _ in range(episodes):
         env.reset()
@@ -145,8 +148,8 @@ def save_game_logs(game_logs:list[GameHistory], path:str="game_logs.json"):
     with open(path, "w") as outfile:
         json.dump(ret, outfile, indent=4)
 
-def run_mcts():
-    mcts(1000, game_logs=game_logs)
+def run_mcts(env:TetrisEnv, episodes:int = 10):
+    mcts(env, episodes=episodes, game_logs=game_logs)
     if len(game_logs) > 0:
         file_ts = game_logs[0].timestamp.strftime("%y%m%d_%H%M%S")
         save_game_logs(game_logs, f"game_logs_{file_ts}.json")
@@ -176,26 +179,26 @@ def main():
   print(env.record.__dict__)
 
 
-show_board_before_running_model = False # @param {type:"boolean"}
+e = TetrisEnv.smoltris()
 
-# Initialize Tetris environment
-env = TetrisEnv(piece_bag=[Tetrominos.O])
 input_channels = 1
-board_height = 10   # 20 for playfield, 4 for staging next piece
-board_width = 5
-action_dim = 4 * board_width  # 4 rotations
-# A one-hot for the current piece
+action_dim = 4 * e.board_width  # 4 rotations
 linear_data_dim = Tetrominos.get_num_tetrominos()
 
-log_dir = None
-if config.persist_logs:
-    # YYMMDD-HHMMSS
-    current_time = datetime.now().strftime('%y%m%d_%H%M%S')
-    log_dir = os.path.join(config.tensorboard_log_dir, f'{current_time}-{config.slug}')
+# YYMMDD-HHMMSS
+current_time = datetime.now().strftime('%y%m%d_%H%M%S')
+model_id = utils.word_id()
+log_dir = os.path.join(config.tensorboard_log_dir, f'{current_time}-{model_id}-{config.slug}')
+agent = DQNAgent(input_channels, e.board_height, e.board_width, action_dim, linear_data_dim=linear_data_dim, log_dir=log_dir, model_id=model_id)
 
-agent = DQNAgent(input_channels, board_height, board_width, action_dim, linear_data_dim=linear_data_dim, log_dir=log_dir)
+#run_mcts(smoltris, episodes=100) # and exit()
 
-num_episodes = 10
+# load_path = os.path.join(config.workspace_dir, "storage", "models", "funnyhouse-trained-smoltris.pth")
+# agent.load_model(load_path)
+
+# while smoltris.stats.total_lines_cleared < 1000:
+#     agent.run(smoltris, 10)
+
 target_update_interval = 10
 
 def keep_training(agent):
@@ -235,33 +238,12 @@ def keep_training(agent):
 
 
 
-ODU = [Tetrominos.O, Tetrominos.DOT, Tetrominos.USCORE]
-
-agent.run(TetrisEnv(piece_bag=ODU, board_height=board_height, board_width=board_width), 1000)
-
-sys.exit()
-
-# run_mcts() # and exit()
-
-
-playback = json.load(open(config.workspace_dir + "/game_logs_240717_165244.json"))
-playback = [GameHistory.from_jsonable(g) for g in playback["games"].values()]
-env = TetrisEnv(playback[0].bag)
-num_games = len(playback)
-agent.run(env, 10, playback_list=playback)
-
-
-agent.exploration_rate = 0.1
-# Fly, model, FLY!!!
-agent.run(env, 50)
-
-while keep_training(agent):
-    agent.run(env, 1000, train = True)
-
-
-
-
-sys.exit()
+def run_from_playback(path:str):
+    playback = json.load(open(path, "r"))
+    playback = [GameHistory.from_jsonable(g) for g in playback["games"].values()]
+    num_games = len(playback)
+    # episode count doesn't matter when playback is specified
+    agent.run(e, 10, playback_list=playback)
 
 
 
@@ -269,21 +251,25 @@ sys.exit()
 
 
 
+# playback_path = os.path.join(config.workspace_dir, "game_logs_240718_215902_expert_smoltris.json")
+# print(playback_path)
+# run_from_playback(playback_path)
+
+
+# env = TetrisEnv(piece_bag=ODU, board_height=10, board_width=5)
+# while env.stats.total_lines_cleared < 10000:
+#     agent.run(env, 10)
+
+# save_location = os.path.join(
+#     config.model_storage_dir, 
+#     f"{agent.model.id}.pth")
+# agent.save_model(save_location)
 
 
 
-
-
-# agent.run(env, 10)
-# while keep_training(agent):
-#     agent.run(env, 100, train = True)
-# else:
-#     print("Training SUCCEEDED!!!!!")
-#     # filename = f"tetris_ep{agent.agent_episode_count}_TRAINED.pth"
-#     # full_path = os.path.join(model_save_dir, filename)
-#     # torch.save(agent.model.state_dict(), full_path)
-#     # print(f"Saved model to {full_path}")
-# agent.train(env, 10)
+# sets = GameRuns(config.workspace_dir)
+# games = sets.load("game_logs_240717_144432")
+# sets.cumulative_reward_plot(games)
 
 
 

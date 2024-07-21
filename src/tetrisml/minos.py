@@ -8,7 +8,7 @@ class MinoShape:
     Importantly, this class is meant to be immutable.
     """
     def __init__(self, shape_id:int, rot:int):
-        self.shape:list[list[int]] = Tetrominos.cache[shape_id][rot]
+        self.shape:list[list[int]] = Tetrominos.make(shape_id, rot).pattern
         self.shape_id:int = shape_id
         self.shape_rot:int = rot
         self.height:int = len(self.shape)

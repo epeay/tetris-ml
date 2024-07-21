@@ -91,10 +91,9 @@ class TetrisBoard:
         return row_backups
 
 
-
-
     def find_logical_BL_placement(self, piece:TetrominoPiece, col):
         """
+        TODO Convert to use minos
         Assumes the piece fits on the board, horizontally. The piece WILL fit
         vertically, as there are 4 empty rows at the top of the board, which if
         utilized, trigger game over.
@@ -130,9 +129,6 @@ class TetrisBoard:
         pattern = piece.get_pattern()
         bottom_offsets = np.array(piece.get_bottom_offsets())
         # TODO don't calculate all bottoms because we don't need them all
-
-        # pdb.set_trace()
-
 
         board_heights = np.array(self.get_tops()[col:col+piece.get_width()])
 

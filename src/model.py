@@ -14,7 +14,9 @@ from torch.utils.tensorboard import SummaryWriter
 import random
 from collections import deque
 
+import cheating
 
+import utils
 from tetrisml import *
 
 device = torch.device("cpu")
@@ -69,16 +71,21 @@ class ModelState():
 
 
 class TetrisCNN(nn.Module):
-    def __init__(self, input_channels, board_height, board_width, action_dim, linear_layer_input_dim=0):
+    def __init__(self, id,
+                 input_channels, 
+                 board_height, 
+                 board_width, 
+                 action_dim, 
+                 linear_layer_input_dim=0):
         """
-        input_channels: 1
-        board_height: 24
-        board_width: 10
-        action_dim: 40  (10 columns * 4 rotations)
+        Common param example:
+            input_channels: 1
+            board_height: 24  <- Does the model need to know about those top 4 rows?
+            board_width: 10
+            action_dim: 40  (10 columns * 4 rotations)
         """
 
-        self.linear_layer_input_dim = linear_layer_input_dim
-
+        self.id = id
 
         super(TetrisCNN, self).__init__()
         self.conv1 = nn.Conv2d(input_channels, 32, kernel_size=3, stride=1, padding=1)
@@ -109,9 +116,6 @@ class TetrisCNN(nn.Module):
 
 
         x = torch.cat((x, linear_layer_input), dim=1)
-
-        # x is now (64,15369)
-        # which is 
 
         fc1_out = self.fc1(x)
 
@@ -158,12 +162,13 @@ class DQNAgent:
                  learning_rate=0.001,
                  discount_factor=0.99,
                  exploration_rate=1.0,
-                 exploration_decay=0.995,
+                 exploration_decay=0.999,
                  min_exploration_rate=0.01,
                  replay_buffer_size=10000,
                  batch_size=64,
                  log_dir:str=None,
-                 load_path:str=None
+                 load_path:str=None,
+                 model_id:str=None
                  ):
         """
         If log_dir is not specified, no logs will be written.
@@ -183,8 +188,8 @@ class DQNAgent:
         self.board_height = board_height
         self.board_width = board_width
 
-        self.model = TetrisCNN(input_channels, board_height + 4, board_width, action_dim, linear_data_dim)
-        self.target_model = TetrisCNN(input_channels, board_height + 4, board_width, action_dim, linear_data_dim)
+        self.model = TetrisCNN(model_id, input_channels, board_height + 4, board_width, action_dim, linear_data_dim)
+        self.target_model = TetrisCNN(model_id, input_channels, board_height + 4, board_width, action_dim, linear_data_dim)
         self.update_target_model()
 
         self.optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
@@ -208,7 +213,7 @@ class DQNAgent:
         checkpoint.optimizer_state = self.optimizer.state_dict()
         checkpoint.replay_buffer = self.replay_buffer
         checkpoint.exploration = self.exploration_rate
-        checkpoint.episodek = self.agent_episode_count
+        checkpoint.episode = self.agent_episode_count
         torch.save(checkpoint, abspath)
 
     def load_model(self, abspath):
@@ -220,10 +225,12 @@ class DQNAgent:
         self.replay_buffer = checkpoint.replay_buffer
         self.exploration_rate = checkpoint.exploration
         self.agent_episode_count = checkpoint.episode
+        if self.agent_episode_count is None:
+            self.agent_episode_count = 0
 
 
 
-    def log_game_record(self, game_record:TetrisGameRecord):
+    def log_game_record(self, game_record:TetrisGameRecord, envstats:EnvStats):
 
         if self.writer is None:
             print("WARNING: Not persisting game logs to disk")
@@ -255,6 +262,7 @@ class DQNAgent:
         print(f"Prediction Rate: {predict_rate} ({predict} of {predict+guess})")
         print(f"Duration: {r.duration_ns / 1000000000}")
         print(f"Agent Exploration Rate: {r.agent_info.exploration_rate}")
+        print(f"AGENT Total Lines Cleared: {envstats.total_lines_cleared}")
         if r.loss is not None:
             print(f"Loss {r.loss}")
 
@@ -270,6 +278,7 @@ class DQNAgent:
         self.writer.add_scalar('Episode/Prediction Rate', predict_rate, episode)
         self.writer.add_scalar('Episode/Duration', r.duration_ns / 1000000000, episode)
         self.writer.add_scalar('Episode/Avg Time Per Move', r.avg_time_per_move, episode)
+        self.writer.add_scalar('Agent/Total Lines Cleared', envstats.total_lines_cleared, episode)
 
         if r.loss is not None:
             self.writer.add_scalar('Episode/Loss', r.loss, episode)
@@ -334,6 +343,13 @@ class DQNAgent:
         total_rewards = []
         target_update_interval = 10
 
+        line_clear_watermark = 2
+        unsaved_game_streak = 0
+
+        # Let's wait until the end of the game to 
+        # determine whether to store these states or not.
+        rememberable = []
+
         playback = None
         playback_itr = iter(playback_list)
 
@@ -365,6 +381,7 @@ class DQNAgent:
             total_reward = 0
             done = False
             loss = None
+            record_game = False
 
             # Also iterates after step()
             placement = next(move_itr, None)
@@ -389,13 +406,30 @@ class DQNAgent:
                     planned_shape = placement.shape
                     is_prediction = False
                 else:
-                    if train:
-                        action, is_prediction = self.choose_action(curr_state)
-                    else:
-                        action = self.predict(curr_state)
-                        is_prediction = True
+
+                    prediction = self.predict(curr_state)
+                    p_mino = MinoShape(env.current_piece.shape, prediction[1])
+                    lccords = env.board.find_logical_BL_placement(p_mino.get_piece(), prediction[0])
+
+                    env.find_best_placement(p_mino)
+
+                    cheating.get_future_reward(env, p_mino)
+
+                    guess = self.guess()
+                    algo_options:list[MinoPlacement] = []
+                    for r in range(4):
+                        algo_options += cheating.find_possible_moves(env, MinoShape(env.current_piece.shape, r))
                     
-                    planned_shape = MinoShape(env.current_piece.shape, action[1])
+                    algo_options = sorted(algo_options, key=lambda x: x.reward, reverse=True)
+
+
+                    # if train:
+                    #     action, is_prediction = self.choose_action(curr_state)
+                    # else:
+                    #     action = self.predict(curr_state)
+                    #     is_prediction = True
+                    
+                    # planned_shape = MinoShape(env.current_piece.shape, action[1])
 
                 col, _ = action
 
@@ -429,11 +463,9 @@ class DQNAgent:
                     print("Hit move cap")
                     done = True
 
-                if done:
-                    env.close_episode()
-
                 if train:
-                    self.remember(curr_state, action, reward, next_state, done)
+                    rememberable.append((curr_state, action, reward, next_state, done))
+                    # self.remember(curr_state, action, reward, next_state, done)
                     loss = self.replay()
 
                 # Prep for next turn
@@ -443,6 +475,25 @@ class DQNAgent:
                 board = next_state
                 total_reward += reward
 
+            # We're done
+            env.close_episode()
+            game_state = env.record
+
+            if game_state.lines_cleared >= line_clear_watermark:
+                for s in rememberable:
+                    self.remember(*s)
+                
+                line_clear_watermark += 3
+                unsaved_game_streak = 0
+            else:
+                print(f"NOT REMEMBERING GAME")
+                unsaved_game_streak += 1
+                line_clear_watermark -= max(2, line_clear_watermark * 0.990)
+                print(f"Unsaved game streak: {unsaved_game_streak}")
+                
+            rememberable = []
+
+            
             ainfo = AgentGameInfo()
             ainfo.agent_episode = self.agent_episode_count
             ainfo.loss = loss
@@ -463,7 +514,7 @@ class DQNAgent:
             record.loss = loss
             print(f"GAME OVER")
             env.render()
-            self.log_game_record(record)
+            self.log_game_record(record, env.stats)
             total_rewards.append(total_reward)
 
             if train and (episode % target_update_interval == 0):

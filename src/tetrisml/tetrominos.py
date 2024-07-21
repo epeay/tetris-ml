@@ -57,9 +57,9 @@ class Tetrominos:
         elif shape == Tetrominos.L:
             return "L"
         elif shape == Tetrominos.DOT:
-            return "DOT"                # A 1x1 mino, used for testing
+            return "D"                # [D]ot. A 1x1 mino, used for testing
         elif shape == Tetrominos.USCORE:
-            return "USCORE"             # A 2x1 mino, used for testing
+            return "U"                # [U]nderscore. A 2x1 mino, used for testing
         else:
             raise ValueError("Invalid shape")
 

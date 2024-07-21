@@ -1,5 +1,5 @@
 import random
-    import subprocess
+import subprocess
 
 def get_git_hash():
     
@@ -8,7 +8,6 @@ def get_git_hash():
     ret = subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD'])
     ret = ret.decode('ascii').strip()
     return ret
-
 
 
 adjectives = [
@@ -45,3 +44,12 @@ def word_id():
     word-based id
     """
     return f"{random.choice(adjectives)}{random.choice(common_nouns)}"
+
+
+
+def ipython():
+    """
+    Start an IPython session
+    """
+    import IPython
+    IPython.embed()
