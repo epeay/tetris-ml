@@ -10,11 +10,11 @@ class TetrisBoard:
 
     BLOCK = '▆'
 
-    def __init__(self, matrix, height):
+    def __init__(self, matrix:NDArray, height):
         self.play_height = height
         self.height = len(matrix)
         self.width = len(matrix[0])
-        self.board:NDArray = matrix
+        self.board:NDArray = np.array(matrix)
 
     def reset(self):
         self.board.fill(0)
@@ -89,11 +89,9 @@ class TetrisBoard:
                 board_row[lcol-1+i] |= c
 
         return row_backups
-
-
-    def find_logical_BL_placement(self, piece:TetrominoPiece, col):
+    
+    def find_logical_BL_coords(self, mino:MinoShape, col):
         """
-        TODO Convert to use minos
         Assumes the piece fits on the board, horizontally. The piece WILL fit
         vertically, as there are 4 empty rows at the top of the board, which if
         utilized, trigger game over.
@@ -126,55 +124,57 @@ class TetrisBoard:
         col: zero-index column to place the 0th column of the piece.
         """
 
-        pattern = piece.get_pattern()
-        bottom_offsets = np.array(piece.get_bottom_offsets())
-        # TODO don't calculate all bottoms because we don't need them all
+        bottom_offsets = np.array(mino.get_piece().get_bottom_offsets())
+        board_heights = np.array(self.get_tops()[col:col+mino.width])
 
-        board_heights = np.array(self.get_tops()[col:col+piece.get_width()])
-
-        # Given:
-        # BOARD       PIECE
-        # 5 _ _ _ _
-        # 4 _ _ _ X
-        # 3 _ _ X X   X X X X
-        # 2 _ X X _
-        # 1 X X X X
-        # Tops -> [1,2,3,4]
-        #
-        # The sideways I has bottom offsets [0,0,0,0]
-        # Start at min(board_tops)+1 and try to place the piece.
-        #
-        # If placing on row 2, the piece heights would be [2,2,2,2]g
-        # Board heights are [1,2,3,4], so this
-        # doesn't clear the board for all columns. Try placing on row 3.
-        # [3,3,3,3] > [1,2,3,4] ? False
-        # Try row 4... False. Try row 5...
-        # [5,5,5,5] > [1,2,3,4] ? True
-        # So we place the piece on row 5 (index 4)
-        #
-        # 5 X X X X
-        # 4 _ _ _ X
-        # 3 _ _ X X
-        # 2 _ X X _
-        # 1 X X X X
-        # (yes, this is a horrible move)
-
-        p_height = piece.get_height()
-        p_width = piece.get_width()
+        p_height = mino.height
+        p_width = mino.width
         can_place = False
 
-        # TODO Pick better min test height
-        # If there's a very narrow, tall tower, and you're placing a flat I
-        # just to the left of it, you'll likely test placement for each level of
-        # the tower until the piece clears it.
         for place_row in range(min(board_heights)+1, max(board_heights)+2):
-            # In the example, place_row would be 2...3...4...5
-
             bottom_clears_board = all((bottom_offsets + place_row) > board_heights)
             if bottom_clears_board:
                 break
 
         return (place_row, col+1)
+
+
+    @staticmethod
+    def from_ascii(ascii:list[str], h:int = None, w:int = None):
+        """
+        Create a TetrisBoard object from an ASCII representation of a board.
+        This is an important method for bootstrapping tests.
+        """
+
+        ascii = ascii[::-1]
+        space_chars = ('_', ' ', '.', '0')
+
+        ah = len(ascii)
+        aw = max([len(x) for x in ascii])
+
+        if h is not None and h < ah:
+            raise ValueError("Requested height of board is less than ASCII representation")
+        
+        if w is not None and w < aw:
+            raise ValueError("Requested width of board is less than ASCII representation")
+        
+        h = ah if h is None else max(h, ah)
+        w = aw if w is None else max(w, aw)
+
+        ret = np.zeros((h, w), dtype=int)
+
+        for ri, row in enumerate(ascii):
+            for ci, col in enumerate(row):
+                if col not in space_chars:
+                    ret[ri][ci] = 1
+
+        return TetrisBoard(ret, h)
+
+
+    def find_logical_BL_placement(self, piece:TetrominoPiece, col):
+
+        return self.find_logical_BL_coords(MinoShape(piece.shape, 0), col)
+
 
     @staticmethod
     def render_state(board, highlight_shape:MinoShape=None, highlight_bl_coords=None, color=True, title=""):

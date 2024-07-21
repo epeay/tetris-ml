@@ -1,9 +1,10 @@
 import pytest
-import sys
 
-from tetrisml.env import MinoBag
-import sys
- 
+from tetrisml.env import MinoBag, TetrisEnv
+from tetrisml.tetrominos import Tetrominos
+from tetrisml.minos import MinoShape
+
+
 @pytest.fixture
 def mino_bag():
     tiles = [0, 1, 2, 3, 4, 5]
@@ -32,3 +33,34 @@ def test_pull(mino_bag: MinoBag):
 
 def test_str(mino_bag: MinoBag):
     assert str(mino_bag).startswith("MinoBag(")
+
+
+
+@pytest.fixture
+def env():
+    return TetrisEnv.tetris()
+
+def test_TetrisEnv(env: TetrisEnv):
+    assert env.board_height == 20
+    assert env.board_width == 10
+    assert env.piece_bag == Tetrominos.std_bag
+
+
+def test_short_game(env: TetrisEnv):
+
+    env.current_mino = MinoShape(Tetrominos.I, 1)  # Tall I
+
+    for i in range(9):
+        # Drop tall I's across the board
+        env.current_mino = MinoShape(Tetrominos.I, i % 4) # rot shouldn't matter
+        env.step((i, 1))
+        assert sum([sum(x) for x in env.board.board]) == 4 * (i + 1)
+
+    # Drop the last I to clear the board
+    env.current_mino = MinoShape(Tetrominos.I)
+    env.step((9, 1))
+    assert sum([sum(x) for x in env.board.board]) == 0
+
+
+
+

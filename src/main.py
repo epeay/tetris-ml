@@ -91,12 +91,12 @@ def mcts(env:TetrisEnv, episodes:int = 10, game_logs:list[GameHistory]=None):
         move = 0
         while True:
             move += 1
-            piece = env.current_piece
+            piece = env.current_mino
             possibilities = []
             best_reward = -np.inf
             # TODO: Some minos don't need four rotations
             for i in range(4):
-                possibilities += (find_possible_moves(env, MinoShape(piece.shape, i)))
+                possibilities += (find_possible_moves(env, MinoShape(piece.shape_id, i)))
 
             highest_reward_choices = []
 
@@ -190,6 +190,11 @@ current_time = datetime.now().strftime('%y%m%d_%H%M%S')
 model_id = utils.word_id()
 log_dir = os.path.join(config.tensorboard_log_dir, f'{current_time}-{model_id}-{config.slug}')
 agent = DQNAgent(input_channels, e.board_height, e.board_width, action_dim, linear_data_dim=linear_data_dim, log_dir=log_dir, model_id=model_id)
+
+
+agent.run(e, 10000)
+
+
 
 #run_mcts(smoltris, episodes=100) # and exit()
 

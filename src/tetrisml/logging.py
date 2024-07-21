@@ -29,6 +29,7 @@ class TetrisGameRecord:
         self.episode_end_time = None
         self.duration_ns = None
         self.agent_info = {}
+        self.predict_wins = 0
 
     def to_jsonable(self):
         # omitting boards

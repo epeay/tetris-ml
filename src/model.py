@@ -263,6 +263,7 @@ class DQNAgent:
         print(f"Duration: {r.duration_ns / 1000000000}")
         print(f"Agent Exploration Rate: {r.agent_info.exploration_rate}")
         print(f"AGENT Total Lines Cleared: {envstats.total_lines_cleared}")
+        print(f"Predict Wins: {game_record.predict_wins}")
         if r.loss is not None:
             print(f"Loss {r.loss}")
 
@@ -278,6 +279,7 @@ class DQNAgent:
         self.writer.add_scalar('Episode/Prediction Rate', predict_rate, episode)
         self.writer.add_scalar('Episode/Duration', r.duration_ns / 1000000000, episode)
         self.writer.add_scalar('Episode/Avg Time Per Move', r.avg_time_per_move, episode)
+        self.writer.add_scalar('Episode/Predict Wins', r.predict_wins, episode)
         self.writer.add_scalar('Agent/Total Lines Cleared', envstats.total_lines_cleared, episode)
 
         if r.loss is not None:
@@ -307,12 +309,16 @@ class DQNAgent:
         #     sys.exit()
 
 
-    def guess(self):
+    def guess(self, m:MinoShape) -> ModelAction:
         """
         Generates a random action based on the action dimensions.
+        If mino is specified, col will not cause the piece to go out of bounds.
         """
-        col = np.random.choice(self.board_width)
         rotation = np.random.choice(4)
+        m = MinoShape(m.shape_id, rotation) # Change rotation
+        valid_width = self.board_width - m.width
+        col = np.random.choice(valid_width)
+        
         return (col, rotation)
 
     def predict(self, state:ModelState) -> ModelAction:
@@ -330,10 +336,10 @@ class DQNAgent:
         action_index = torch.argmax(q_values).item()
         return (action_index // 4, action_index % 4)
 
-    def choose_action(self, state:ModelState) -> tuple[ModelAction, bool]:
+    def choose_action(self, state:ModelState, m:MinoShape) -> tuple[ModelAction, bool]:
 
         if random.random() < self.exploration_rate:
-            return self.guess(), False
+            return self.guess(m), False
         else:
             action_index = self.predict(state)
             return action_index, True
@@ -386,20 +392,22 @@ class DQNAgent:
             # Also iterates after step()
             placement = next(move_itr, None)
 
+            is_prediction = False
+
             while not done:
                 loss = None
                 planned_shape = None
 
                 # Without a copy, the state changes before being printed
                 curr_state = ModelState(env.board.board.copy())
-                curr_state.set_mino_one_hot(Tetrominos.get_num_tetrominos(), env.current_piece.shape)
+                curr_state.set_mino_one_hot(Tetrominos.get_num_tetrominos(), env.current_mino.shape)
 
                 if is_playback:
-                    if placement.shape.shape_id != env.current_piece.shape:
+                    if placement.shape.shape_id != env.current_mino.shape_id:
                         print("Mismatched shapes")
-                        print(f"Expected {env.current_piece.shape} but got {placement.shape.shape_id}")
+                        print(f"Expected {env.current_mino.shape_id} but got {placement.shape.shape_id}")
                         print(f"Planned move: {placement.shape}")
-                        print(f"Current piece: {env.current_piece}")
+                        print(f"Current piece: {env.current_mino}")
                         raise ValueError("Mismatched shapes")
 
                     action = (placement.bl_coords[1]-1, placement.shape.shape_rot)
@@ -407,31 +415,54 @@ class DQNAgent:
                     is_prediction = False
                 else:
 
+                    # When true, the model made an invalid prediction, and we're
+                    # going to chose that action anyway, for training purposes.
+                    send_invalid = False
+
                     prediction = self.predict(curr_state)
-                    p_mino = MinoShape(env.current_piece.shape, prediction[1])
-                    lccords = env.board.find_logical_BL_placement(p_mino.get_piece(), prediction[0])
+                    p_mino = MinoShape(env.current_mino.shape_id, prediction[1])
+                    p_coords = env.board.find_logical_BL_coords(p_mino, prediction[0])
+                    p_candidate = ()
+                    if p_mino.width + p_coords[1] > env.board.width:
+                        send_invalid = random.random() < 0.1
+                        p_candidate = ("PREDICT", -np.inf, prediction)
+                    else:
+                        p_reward = cheating.get_future_reward(env, p_mino, p_coords)
+                        p_candidate = ("PREDICT", p_reward, prediction)
 
-                    env.find_best_placement(p_mino)
+                    guess = self.guess(env.current_mino)
+                    g_mino = MinoShape(env.current_mino.shape_id, guess[1])
+                    g_coords = env.board.find_logical_BL_coords(g_mino, guess[0])
+                    g_reward = cheating.get_future_reward(env, g_mino, g_coords)
+                    g_candidate = ("GUESS", g_reward, guess)
 
-                    cheating.get_future_reward(env, p_mino)
-
-                    guess = self.guess()
-                    algo_options:list[MinoPlacement] = []
+                    a_options:list[MinoPlacement] = []
                     for r in range(4):
-                        algo_options += cheating.find_possible_moves(env, MinoShape(env.current_piece.shape, r))
+                        # TODO Inefficient
+                        a_options += cheating.find_possible_moves(env, MinoShape(env.current_mino.shape_id, r))
                     
-                    algo_options = sorted(algo_options, key=lambda x: x.reward, reverse=True)
+                    a_options = sorted(a_options, key=lambda x: x.reward, reverse=True)
+                    a_options = [x for x in a_options if x.reward == a_options[0].reward]
+                    a_chosen = np.random.choice(a_options)
+                    a_candidate = ("ALGO", a_chosen.reward, (a_chosen.bl_coords[1]-1, a_chosen.shape.shape_rot))
 
-
-                    # if train:
-                    #     action, is_prediction = self.choose_action(curr_state)
-                    # else:
-                    #     action = self.predict(curr_state)
-                    #     is_prediction = True
+                    candidates = [p_candidate, g_candidate, a_candidate]
+                    candidates = sorted(candidates, key=lambda x: x[1], reverse=True)
                     
-                    # planned_shape = MinoShape(env.current_piece.shape, action[1])
+                    # You were the chosen one!
+                    chosen = candidates[0]
+                    if chosen[0] == "PREDICT":
+                        is_prediction = True
+                        env.record.predict_wins += 1
 
-                col, _ = action
+                    # print(f"Chose {chosen[0]} with reward {chosen[1]}, all rewards: {[c[1] for c in candidates]}")
+
+                    if send_invalid:
+                        action = guess
+                    else:
+                        action = chosen[2]
+
+
 
                 # Do the thing. Apply the action, choose the next piece, etc
                 # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -440,7 +471,7 @@ class DQNAgent:
                 print(".", end='')
 
                 next_state = ModelState(next_board_state.squeeze(0))
-                next_state.set_mino_one_hot(Tetrominos.get_num_tetrominos(), env.current_piece.shape)
+                next_state.set_mino_one_hot(Tetrominos.get_num_tetrominos(), env.current_mino.shape)
 
                 # if info.valid_action:
                 #     TetrisBoard.render_state(curr_state.board, planned_shape, (21, col+1), title="Planned move")
@@ -497,6 +528,12 @@ class DQNAgent:
             ainfo = AgentGameInfo()
             ainfo.agent_episode = self.agent_episode_count
             ainfo.loss = loss
+
+            if self.agent_episode_count % 1000 == 0:
+                self.save_model(f"storage/models/{self.model.id}-ep{self.agent_episode_count}.pth")
+
+
+
 
             # X of Y for this current execution run of the agent
             # Within the lifecycle of this method execution.

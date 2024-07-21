@@ -34,6 +34,19 @@ class Tetrominos:
         USCORE: np.array([[1,1]])
     }
 
+    int_name_lookup = [
+        (O, "O"),
+        (I, "I"),
+        (S, "S"),
+        (Z, "Z"),
+        (T, "T"),
+        (J, "J"),
+        (L, "L"),
+        (DOT, "D"),
+        (USCORE, "U")
+    ]
+
+
     # Stores patterns for each tetromino, at each rotation
     cache = {}
 
@@ -41,42 +54,44 @@ class Tetrominos:
         return len(Tetrominos.base_patterns.keys())
 
     @staticmethod
-    def shape_name(shape):
-        if shape == Tetrominos.O:
-            return "O"
-        elif shape == Tetrominos.I:
-            return "I"
-        elif shape == Tetrominos.S:
-            return "S"
-        elif shape == Tetrominos.Z:
-            return "Z"
-        elif shape == Tetrominos.T:
-            return "T"
-        elif shape == Tetrominos.J:
-            return "J"
-        elif shape == Tetrominos.L:
-            return "L"
-        elif shape == Tetrominos.DOT:
-            return "D"                # [D]ot. A 1x1 mino, used for testing
-        elif shape == Tetrominos.USCORE:
-            return "U"                # [U]nderscore. A 2x1 mino, used for testing
-        else:
-            raise ValueError("Invalid shape")
+    def shape_name(shape_id:int):
+
+        # Find the shape name
+        for id, name in Tetrominos.int_name_lookup:
+            if id == shape_id:
+                return name
+            
+        raise ValueError(f"Invalid shape id {shape_id}")
+    
+    @staticmethod
+    def make_by_char(c:str):
+        for id, char in Tetrominos.int_name_lookup:
+            if char == c:
+                return Tetrominos.make(id)
+
+        raise ValueError(f"Invalid shape character {c}")
+    
+    @staticmethod
+    def get_id_by_char(c:str):
+        for id, char in Tetrominos.int_name_lookup:
+            if char == c:
+                return id
+
+        raise ValueError(f"Invalid shape character {c}")
 
     @staticmethod
-    def make(shape, rot=0):
+    def make(shape:int, rot=0):
         """
         shape:
         """
         if not Tetrominos.cache:
-            for shape, pattern in Tetrominos.base_patterns.items():
-                Tetrominos.cache[shape] = [
+            for id, pattern in Tetrominos.base_patterns.items():
+                Tetrominos.cache[id] = [
                     np.array(pattern),
                     np.array(np.rot90(pattern)),
                     np.array(np.rot90(pattern, 2)),
                     np.array(np.rot90(pattern, 3))
                 ]
-
 
         if shape not in Tetrominos.base_patterns.keys():
             raise ValueError("Invalid shape")

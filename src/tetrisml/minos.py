@@ -7,7 +7,7 @@ class MinoShape:
     A MinoShape is a single rotation of a Tetromino piece. It is a 2D array.
     Importantly, this class is meant to be immutable.
     """
-    def __init__(self, shape_id:int, rot:int):
+    def __init__(self, shape_id:int, rot:int=0):
         self.shape:list[list[int]] = Tetrominos.make(shape_id, rot).pattern
         self.shape_id:int = shape_id
         self.shape_rot:int = rot
@@ -31,6 +31,10 @@ class MinoShape:
     @staticmethod
     def from_jsonable(data:dict):
         return MinoShape(data["id"], data["rot"])
+
+
+    def by_name(self):
+        return Tetrominos.shape_name(self.shape_id)
 
 
     def get_piece(self)->TetrominoPiece:

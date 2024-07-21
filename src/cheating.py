@@ -14,7 +14,7 @@ def find_possible_moves(env:TetrisEnv, s:MinoShape) -> list[MinoPlacement]:
     # This is gonna be inefficient for now
 
     for c in range(board.width - s.width + 1):
-        lcoords = board.find_logical_BL_placement(s.get_piece(), c)
+        lcoords = board.find_logical_BL_coords(s, c)
 
         # Assume placement of Shape:
         # Field:      | Shape:
@@ -55,11 +55,11 @@ def get_future_reward(board:TetrisEnv, s:MinoShape, lcoords:tuple[int, int]) -> 
     Given a board, mino, and placement coords, returns the reward of that
     placement. Temporarily modifies the board, but reverts.
     """
-    backup_rows = board.place_shape(s, lcoords)
-    reward = env._calculate_reward()
+    backup_rows = board.board.place_shape(s, lcoords)
+    reward = board._calculate_reward()
 
     # Revert the board
     for r in range(len(backup_rows)):
-        board.board[lcoords[0]-1+r] = backup_rows[r]
+        board.board.board[lcoords[0]-1+r] = backup_rows[r]
 
     return reward

@@ -41,10 +41,14 @@ class EnvStats:
 class TetrisEnv(gym.Env):
 
     def __init__(self, piece_bag=None, board_height=20, board_width=10):
+        """
+        board_height: The DESIRED height of the board. The actual height will be
+                        board_height + 4 to make clearance for overflows.
+        """
         super(TetrisEnv, self).__init__()
         self.board_height = board_height
         self.board_width = board_width
-        self.current_piece = None
+        self.current_mino:MinoShape = None
         self.pieces = Tetrominos()
         self.reward_history = deque(maxlen=10)
         self.record = TetrisGameRecord()
@@ -56,7 +60,7 @@ class TetrisEnv(gym.Env):
         self.record:TetrisGameRecord = None
 
         # Indexes  0-19 - The visible playfield
-        #         20-23 - Buffer for the next piece to sit above the board
+        #         20-23 - Buffer for overflows
         self.state = np.zeros((self.board_height + 4, self.board_width), dtype=int)
 
         # Creates a *view* from the larger state
@@ -85,7 +89,7 @@ class TetrisEnv(gym.Env):
         # The global random module is not affected.
         self.random = random.Random(self.random_seed)
 
-        self.current_piece = self._get_random_piece()
+        self.current_mino = self._get_random_piece()
         self.record = TetrisGameRecord()
         self.step_history:list[MinoPlacement] = []
         return self._get_board_state()
@@ -99,10 +103,7 @@ class TetrisEnv(gym.Env):
         lcol = col + 1
 
         info = ActionFeedback()
-
-        # Rotate the piece to the desired rotation
-        for _ in range(rotation):
-            self.current_piece.rotate()  # Rotates IN PLACE
+        mino = MinoShape(self.current_mino.shape_id, rotation)
 
         # Clear the area above the visible board. If this range is used during
         # piece placement, the game is over.
@@ -111,7 +112,7 @@ class TetrisEnv(gym.Env):
         # Check for right-side overflow
         # Given a horizontal I piece on col 0
         # right_lcol would be 4. The piece would occupy lcolumns 1-4.
-        right_lcol = lcol-1 + self.current_piece.get_width()
+        right_lcol = col + mino.width
         if right_lcol > self.board_width:
             # Ignore this action and try again.
             #
@@ -119,7 +120,6 @@ class TetrisEnv(gym.Env):
             # the piece over the edge of the board.
             done = False
             info.valid_action = False
-            self.current_piece.rot = 0
             self.record.invalid_moves += 1
             reward = -1
 
@@ -128,14 +128,14 @@ class TetrisEnv(gym.Env):
         info.valid_action = True
         lcoords = None
 
-        lcoords = self.board.find_logical_BL_placement(self.current_piece, col)
-        self.board.place_piece(self.current_piece, lcoords)
+        lcoords = self.board.find_logical_BL_coords(mino, col)
+        self.board.place_shape(mino, lcoords)
 
         self.stats.total_placements += 1
         self.record.moves += 1
         self.record.boards.append(self.board.board.copy())
-        self.record.pieces.append(self.current_piece.to_dict())
-        self.current_piece.rot = 0
+        self.record.pieces.append(mino.get_piece().to_dict())
+        self.current_mino.rot = 0
 
 
         self.record.placements.append(lcoords)
@@ -175,7 +175,7 @@ class TetrisEnv(gym.Env):
         reward += lines_gone * 100
 
         # Prep for next move
-        self.current_piece = self._get_random_piece()
+        self.current_mino = self._get_random_piece()
         next_board_state = self._get_board_state()
         return next_board_state, reward, done, info
 
@@ -199,10 +199,10 @@ class TetrisEnv(gym.Env):
         self.board.render()
 
     def _get_random_piece(self):
-        return self.pieces.make(self.random.choice(self.piece_bag))
+        return MinoShape(self.random.choice(self.piece_bag))
 
     def _is_valid_action(self, piece, lcol):
-        piece = self.current_piece
+        piece = self.current_mino
 
         if lcol < 1 or lcol > self.board_width:
             return False
@@ -298,7 +298,7 @@ class TetrisEnv(gym.Env):
 
     @staticmethod
     def smoltris():
-        bag = [Tetrominos.O, Tetrominos.D, Tetrominos.U]
+        bag = [Tetrominos.O, Tetrominos.DOT, Tetrominos.USCORE]
         return TetrisEnv(piece_bag=bag, board_height=10, board_width=5)
     
     @staticmethod
