@@ -13,6 +13,8 @@ from model import *
 from tetrisml.gamesets import GameRuns
 import utils
 from cheating import *
+from viz import *
+import time
 
 os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 import tensorflow as tf
@@ -158,26 +160,6 @@ def run_mcts(env:TetrisEnv, episodes:int = 10):
 
 
 
-def main():
-  # Example usage
-  env = TetrisEnv()
-  env.piece_bag = Tetrominos.std_bag
-  state = env.reset()
-
-  done = False
-  loop_limit = 2
-  loop = 0
-  while not done and loop < loop_limit:
-      action = env.action_space.sample()  # Random action for demonstration
-      next_state, reward, done, info = env.step(action)
-      env.board.render()
-      print(f"Reward: {reward}, Done: {done}")
-      print(info)
-      print("----------------------")
-      loop += 1
-
-  print(env.record.__dict__)
-
 
 e = TetrisEnv.smoltris()
 
@@ -189,12 +171,12 @@ linear_data_dim = Tetrominos.get_num_tetrominos()
 current_time = datetime.now().strftime('%y%m%d_%H%M%S')
 model_id = utils.word_id()
 log_dir = os.path.join(config.tensorboard_log_dir, f'{current_time}-{model_id}-{config.slug}')
-agent = DQNAgent(input_channels, e.board_height, e.board_width, action_dim, linear_data_dim=linear_data_dim, log_dir=log_dir, model_id=model_id)
+
+use_log_dir = log_dir if config.persist_logs else None
+agent = DQNAgent(input_channels, e.board_height, e.board_width, action_dim, linear_data_dim=linear_data_dim, log_dir=use_log_dir, model_id=model_id)
 
 
-agent.run(e, 10000)
-
-
+# agent.run(e, 1)
 
 #run_mcts(smoltris, episodes=100) # and exit()
 
@@ -248,17 +230,75 @@ def run_from_playback(path:str):
     playback = [GameHistory.from_jsonable(g) for g in playback["games"].values()]
     num_games = len(playback)
     # episode count doesn't matter when playback is specified
-    agent.run(e, 10, playback_list=playback)
+    agent.run(e, 10, playback_list=[playback[0]])
+
+
+
+
+board = TetrisBoard.from_ascii([
+"XXX X",
+"X X X",
+"XX XX",
+"  X X",
+" XX  ",
+" XXXX",
+"  X X",
+], h=e.board_height + 4, w=e.board_width)
+
+board = TetrisBoard.from_ascii([
+"  xxx",
+"xxx  ",
+"x xxx",
+], h=e.board_height + 4, w=e.board_width)
+
+# matrix = np.random.randint(2, size=(10,5))
+# matrix_as_str = ["".join([str(x) for x in row]) for row in matrix]
+# board = TetrisBoard.from_ascii(matrix_as_str, h=e.board_height + 4, w=e.board_width)
 
 
 
 
 
+for epi in range(1000, 11000, 1000):
+
+    model_name = f"densedrink-ep{epi}"
+    agent.load_model(os.path.join(config.model_storage_dir, f"{model_name}.pth"))
+    print(f"Loaded model {model_name}. Episode count: {agent.agent_episode_count}")
+    agent.model.eval()
+
+    d4 = torch.from_numpy(board.board).reshape(1, 1, e.board_height+4, e.board_width).float()
+    ld = torch.from_numpy(np.zeros((1, linear_data_dim))).float()
+    forward_out = agent.model(d4, linear_layer_input=ld)
+    model_choice = forward_out.max()
+
+    model_choice.backward()
+    m = agent.model
+
+    for layer in ("conv1", "conv2"):
+        img_name = f"{layer}_feature_maps-{model_name}.png"
+        data_key = f"{layer}_out"
+        visualize_board_and_feature_maps(d4, m.intermediate_data[data_key], layer, img_name)
+
+    # Use Grad-CAM
+    heatmap = grad_cam(m, d4, ld, m.conv2)
+    activations_heatmap(d4, heatmap, img_name=f"grad_cam_heatmap-{model_name}.png")
+
+    print(f"Saved {model_name} visualizations")
+
+
+# plt.imshow(heatmap, cmap='viridis')
+# plt.colorbar()
+# plt.savefig(f"densedrink-ep1000-grad_cam_heatmap.png")
+# plt.close()
 
 
 # playback_path = os.path.join(config.workspace_dir, "game_logs_240718_215902_expert_smoltris.json")
 # print(playback_path)
 # run_from_playback(playback_path)
+
+
+
+
 
 
 # env = TetrisEnv(piece_bag=ODU, board_height=10, board_width=5)

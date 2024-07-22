@@ -26,6 +26,7 @@ print(f"Using device {device}")
 from typing import NewType
 ModelAction = NewType("ModelAction", tuple[int,int])
 
+
 class ModelState():
     def __init__(self, board:NDArray):
 
@@ -99,11 +100,21 @@ class TetrisCNN(nn.Module):
         self.fc1 = nn.Linear(conv_output_size + linear_layer_input_dim, 128)  # Adjust based on input size
         self.fc2 = nn.Linear(128, action_dim)
 
+        self.intermediate_data = {}
+        self.intermediate_gradients = {}
+
     def forward(self, x_0, linear_layer_input=torch.tensor([])):
         # Expects board input shape (batch_size, channels, height, width)
 
         x_1 = torch.relu(self.conv1(x_0))
+        self.intermediate_data["conv1_out"] = x_1.detach().clone()
+
         x_2 = torch.relu(self.conv2(x_1))
+        self.intermediate_data["conv2_out"] = x_2.detach().clone()
+        
+        # Register hook to capture gradients during the backward pass
+        x_2.register_hook(lambda grad: self.intermediate_gradients.update({'conv2': grad}))
+        
         x = x_2.view(x_2.size(0), -1)  # Flatten the CNN output
 
         # Scale up linear layer input to match batch size
@@ -414,53 +425,15 @@ class DQNAgent:
                     planned_shape = placement.shape
                     is_prediction = False
                 else:
-
-                    # When true, the model made an invalid prediction, and we're
-                    # going to chose that action anyway, for training purposes.
-                    send_invalid = False
-
-                    prediction = self.predict(curr_state)
-                    p_mino = MinoShape(env.current_mino.shape_id, prediction[1])
-                    p_coords = env.board.find_logical_BL_coords(p_mino, prediction[0])
-                    p_candidate = ()
-                    if p_mino.width + p_coords[1] > env.board.width:
-                        send_invalid = random.random() < 0.1
-                        p_candidate = ("PREDICT", -np.inf, prediction)
+                    if train:
+                        action, is_prediction = self.choose_action(curr_state, env.current_mino)
                     else:
-                        p_reward = cheating.get_future_reward(env, p_mino, p_coords)
-                        p_candidate = ("PREDICT", p_reward, prediction)
-
-                    guess = self.guess(env.current_mino)
-                    g_mino = MinoShape(env.current_mino.shape_id, guess[1])
-                    g_coords = env.board.find_logical_BL_coords(g_mino, guess[0])
-                    g_reward = cheating.get_future_reward(env, g_mino, g_coords)
-                    g_candidate = ("GUESS", g_reward, guess)
-
-                    a_options:list[MinoPlacement] = []
-                    for r in range(4):
-                        # TODO Inefficient
-                        a_options += cheating.find_possible_moves(env, MinoShape(env.current_mino.shape_id, r))
-                    
-                    a_options = sorted(a_options, key=lambda x: x.reward, reverse=True)
-                    a_options = [x for x in a_options if x.reward == a_options[0].reward]
-                    a_chosen = np.random.choice(a_options)
-                    a_candidate = ("ALGO", a_chosen.reward, (a_chosen.bl_coords[1]-1, a_chosen.shape.shape_rot))
-
-                    candidates = [p_candidate, g_candidate, a_candidate]
-                    candidates = sorted(candidates, key=lambda x: x[1], reverse=True)
-                    
-                    # You were the chosen one!
-                    chosen = candidates[0]
-                    if chosen[0] == "PREDICT":
+                        action = self.predict(curr_state)
                         is_prediction = True
-                        env.record.predict_wins += 1
 
-                    # print(f"Chose {chosen[0]} with reward {chosen[1]}, all rewards: {[c[1] for c in candidates]}")
-
-                    if send_invalid:
-                        action = guess
-                    else:
-                        action = chosen[2]
+                
+                most_recent_board = env._get_board_state()
+                most_recent_board = most_recent_board[np.newaxis, :, :, :]
 
 
 
@@ -495,8 +468,8 @@ class DQNAgent:
                     done = True
 
                 if train:
-                    rememberable.append((curr_state, action, reward, next_state, done))
-                    # self.remember(curr_state, action, reward, next_state, done)
+                    # rememberable.append((curr_state, action, reward, next_state, done))
+                    self.remember(curr_state, action, reward, next_state, done)
                     loss = self.replay()
 
                 # Prep for next turn
