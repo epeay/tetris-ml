@@ -7,7 +7,7 @@ import yaml
 
 import matplotlib.pyplot as plt
 
-
+from config import load_config, TMLConfig
 from tetrisml import *
 from model import *
 from tetrisml.gamesets import GameRuns
@@ -27,58 +27,7 @@ mino = Tetromino
 """
 
 
-# ../
-WORKSPACE_ROOT = os.path.dirname(os.path.realpath(__file__))
-WORKSPACE_ROOT = os.path.abspath(os.path.join(WORKSPACE_ROOT, ".."))
-
-
-class TMLConfig(dict):
-    """
-    These attributes don't actually get set on the class, but are stored in the 
-    dict. However, defining the attributes helps with code completion and 
-    type hinting.
-
-    The dict makes it trivial to merge in external values.
-    """
-    def __init__(self):
-        self.workspace_dir:str = os.path.normpath(WORKSPACE_ROOT)
-        self.storage_root:str = os.path.join(WORKSPACE_ROOT, "storage")
-        self.tensorboard_log_dir:str = os.path.join(self.storage_root, "tensor-logs")
-        self.model_storage_dir:str = os.path.join(self.storage_root, "models")
-        self.persist_logs:bool = False
-        self.git_short:str = utils.get_git_hash()
-        
-
-    def __setattr__(self, key, value):
-        """Class properties become dict key/value pairs"""
-        self[key] = value
-
-    def __getattr__(self, key):
-        return self[key]
-
-
-
-def load_config():
-    # Create workspace directory
-    config = TMLConfig()
-
-    # Load ../config.yaml
-    config_path = os.path.join(os.getcwd(), "config.yaml")
-    with open(config_path, 'r') as stream:
-        try:
-            config.update(yaml.safe_load(stream))
-        except yaml.YAMLError as exc:
-            print(exc)
-
-
-    os.makedirs(config.workspace_dir, exist_ok=True)
-    os.makedirs(config.storage_root, exist_ok=True)
-    os.makedirs(config.tensorboard_log_dir, exist_ok=True)
-    os.makedirs(config.model_storage_dir, exist_ok=True)
-
-    return config
-
-config = load_config()
+config:TMLConfig = load_config()
 game_logs:list[GameHistory] = []
 
 def mcts(env:TetrisEnv, episodes:int = 10, game_logs:list[GameHistory]=None):
@@ -235,55 +184,6 @@ def run_from_playback(path:str):
 
 
 
-board = TetrisBoard.from_ascii([
-"XXX X",
-"X X X",
-"XX XX",
-"  X X",
-" XX  ",
-" XXXX",
-"  X X",
-], h=e.board_height + 4, w=e.board_width)
-
-board = TetrisBoard.from_ascii([
-"  xxx",
-"xxx  ",
-"x xxx",
-], h=e.board_height + 4, w=e.board_width)
-
-# matrix = np.random.randint(2, size=(10,5))
-# matrix_as_str = ["".join([str(x) for x in row]) for row in matrix]
-# board = TetrisBoard.from_ascii(matrix_as_str, h=e.board_height + 4, w=e.board_width)
-
-
-
-
-
-for epi in range(1000, 11000, 1000):
-
-    model_name = f"densedrink-ep{epi}"
-    agent.load_model(os.path.join(config.model_storage_dir, f"{model_name}.pth"))
-    print(f"Loaded model {model_name}. Episode count: {agent.agent_episode_count}")
-    agent.model.eval()
-
-    d4 = torch.from_numpy(board.board).reshape(1, 1, e.board_height+4, e.board_width).float()
-    ld = torch.from_numpy(np.zeros((1, linear_data_dim))).float()
-    forward_out = agent.model(d4, linear_layer_input=ld)
-    model_choice = forward_out.max()
-
-    model_choice.backward()
-    m = agent.model
-
-    for layer in ("conv1", "conv2"):
-        img_name = f"{layer}_feature_maps-{model_name}.png"
-        data_key = f"{layer}_out"
-        visualize_board_and_feature_maps(d4, m.intermediate_data[data_key], layer, img_name)
-
-    # Use Grad-CAM
-    heatmap = grad_cam(m, d4, ld, m.conv2)
-    activations_heatmap(d4, heatmap, img_name=f"grad_cam_heatmap-{model_name}.png")
-
-    print(f"Saved {model_name} visualizations")
 
 
 # plt.imshow(heatmap, cmap='viridis')
