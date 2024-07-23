@@ -5,6 +5,7 @@ import numpy as np
 from model import TetrisCNN
 from numpy import ndarray as NDArray
 
+
 # Function to visualize feature maps
 def visualize_board_and_feature_maps(board, feature_maps, layer_name, img_name):
     plt.ioff()  # Turn off interactive mode
@@ -18,30 +19,32 @@ def visualize_board_and_feature_maps(board, feature_maps, layer_name, img_name):
 
     # Display the board state
     board_np = np.flipud(board[0, 0])
-    axs[0].imshow(board_np, cmap='Blues')
-    axs[0].axis('off')
-    axs[0].set_title('Board')
+    axs[0].imshow(board_np, cmap="Blues")
+    axs[0].axis("off")
+    axs[0].set_title("Board")
 
     # Display the feature maps
     for i in range(num_maps):
         flipped_map = np.flipud(feature_maps[0, i])
-        axs[i + 1].imshow(flipped_map, cmap='gray')
-        axs[i + 1].axis('off')
-        axs[i + 1].set_title(f'FM{i + 1}')
+        axs[i + 1].imshow(flipped_map, cmap="gray")
+        axs[i + 1].axis("off")
+        axs[i + 1].set_title(f"FM{i + 1}")
 
     plt.savefig(img_name)
     plt.close()
     plt.ion()  # Turn interactive mode back on
 
 
-def activations_heatmap(board, heatmap, title="Grad-CAM Heatmap", img_name="heatmap.png"):
+def activations_heatmap(
+    board, heatmap, title="Grad-CAM Heatmap", img_name="heatmap.png"
+):
     plt.ioff()
-    board = board[0,0]
+    board = board[0, 0]
 
     fig, axs = plt.subplots(1, 2, figsize=(10, 5))
 
     # Display the board
-    axs[0].imshow(board, cmap='Blues')
+    axs[0].imshow(board, cmap="Blues")
     axs[0].set_title("Board State")
     axs[0].invert_yaxis()  # Invert the y-axis
     num_rows, num_cols = board.shape
@@ -51,7 +54,7 @@ def activations_heatmap(board, heatmap, title="Grad-CAM Heatmap", img_name="heat
     axs[0].set_yticklabels(np.arange(num_rows))
 
     # Display the heatmap
-    im = axs[1].imshow(heatmap, cmap='viridis')
+    im = axs[1].imshow(heatmap, cmap="viridis")
     axs[1].set_title(title)
     axs[1].invert_yaxis()  # Invert the y-axis
     num_rows, num_cols = heatmap.shape
@@ -68,9 +71,8 @@ def activations_heatmap(board, heatmap, title="Grad-CAM Heatmap", img_name="heat
     plt.ion()
 
 
-
 # Function to apply Grad-CAM and save heatmap
-def grad_cam(model, input, linear_data, target_layer:torch.nn.modules.conv.Conv2d):
+def grad_cam(model, input, linear_data, target_layer: torch.nn.modules.conv.Conv2d):
     model.eval()
 
     tl_activations = []
@@ -103,8 +105,7 @@ def grad_cam(model, input, linear_data, target_layer:torch.nn.modules.conv.Conv2
     return heatmap.numpy()
 
 
-
-def visualize(m:TetrisCNN, d4_board:NDArray, step_count):
+def visualize(m: TetrisCNN, d4_board: NDArray, step_count):
     pass
     # Save feature maps from conv1 and conv2 layers
 
@@ -114,4 +115,3 @@ def visualize(m:TetrisCNN, d4_board:NDArray, step_count):
     # plt.colorbar()
     # plt.savefig(f"grad_cam_heatmap-s{step_count}.png")
     # plt.close()
-

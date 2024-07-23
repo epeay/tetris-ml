@@ -15,7 +15,6 @@ from tetrisml.board import TetrisBoard
 from tetrisml.logging import TetrisGameRecord
 
 
-
 class ActionFeedback:
     def __init__(self, valid_action=False):
         # Does this action place the mino on or above the board, and not
@@ -28,9 +27,8 @@ class ActionFeedback:
 
 
 class EnvStats:
-    """
-    
-    """
+    """ """
+
     def __init__(self):
         # Use a parlance that isn't tied to an ML model
         self.total_placements = 0
@@ -48,16 +46,16 @@ class TetrisEnv(gym.Env):
         super(TetrisEnv, self).__init__()
         self.board_height = board_height
         self.board_width = board_width
-        self.current_mino:MinoShape = None
+        self.current_mino: MinoShape = None
         self.pieces = Tetrominos()
         self.reward_history = deque(maxlen=10)
         self.record = TetrisGameRecord()
         self.piece_bag = Tetrominos.std_bag if piece_bag is None else piece_bag
-        self.step_history:list[MinoPlacement] = []
-        self.random:random.Random = None
+        self.step_history: list[MinoPlacement] = []
+        self.random: random.Random = None
         self.random_seed = None
         self.stats = EnvStats()
-        self.record:TetrisGameRecord = None
+        self.record: TetrisGameRecord = None
 
         # Indexes  0-19 - The visible playfield
         #         20-23 - Buffer for overflows
@@ -73,9 +71,7 @@ class TetrisEnv(gym.Env):
 
         self.reset()
 
-
-
-    def reset(self, seed:int=None):
+    def reset(self, seed: int = None):
         self.board.reset()
 
         if seed is not None:
@@ -91,10 +87,10 @@ class TetrisEnv(gym.Env):
 
         self.current_mino = self._get_random_piece()
         self.record = TetrisGameRecord()
-        self.step_history:list[MinoPlacement] = []
+        self.step_history: list[MinoPlacement] = []
         return self._get_board_state()
 
-    def step(self, action:tuple[int,int]):
+    def step(self, action: tuple[int, int]):
         """
         action: zero-indexed tuple of (column, rotation)
         """
@@ -137,9 +133,7 @@ class TetrisEnv(gym.Env):
         self.record.pieces.append(mino.get_piece().to_dict())
         self.current_mino.rot = 0
 
-
         self.record.placements.append(lcoords)
-
 
         # If any of the top four rows were used -- Game Over
         if np.any(self.board.board[-4:]):
@@ -168,7 +162,7 @@ class TetrisEnv(gym.Env):
         lines_gone = self.board.remove_tetris()
         if lines_gone > 0:
             self.record.cleared_by_size[lines_gone] += 1
-        
+
         self.stats.total_lines_cleared += lines_gone
         self.record.lines_cleared += lines_gone
 
@@ -178,7 +172,6 @@ class TetrisEnv(gym.Env):
         self.current_mino = self._get_random_piece()
         next_board_state = self._get_board_state()
         return next_board_state, reward, done, info
-
 
     def close_episode(self):
         """
@@ -191,9 +184,10 @@ class TetrisEnv(gym.Env):
             return
 
         self.record.episode_end_time = time.monotonic_ns()
-        self.record.duration_ns = self.record.episode_end_time - self.record.episode_start_time
+        self.record.duration_ns = (
+            self.record.episode_end_time - self.record.episode_start_time
+        )
         self.stats.total_games_completed += 1
-
 
     def render(self):
         self.board.render()
@@ -208,10 +202,9 @@ class TetrisEnv(gym.Env):
             return False
 
         # An O piece on col 1 would occupy cols 1-2
-        if lcol + piece.get_width() -1 > self.board_width:
+        if lcol + piece.get_width() - 1 > self.board_width:
             return False
         return True
-
 
     def _calculate_reward(self):
         tower_height = 0
@@ -223,7 +216,7 @@ class TetrisEnv(gym.Env):
             pack = sum(r)
             if pack == 0:
                 break
-            
+
             if pack == self.board_width:
                 clears += 1
 
@@ -232,10 +225,6 @@ class TetrisEnv(gym.Env):
 
         pct_board_full = sum(line_pack) / (self.board_width * tower_height)
         return max(clears, pct_board_full)
-        
-
-
-
 
     def _calculate_reward_bak(self):
 
@@ -278,7 +267,9 @@ class TetrisEnv(gym.Env):
 
         high_tower_penalty = underpacked_lines * sharp_tower_penalty
 
-        line_score = (board_tiles+(10*lines_cleared)) / float(self.board_width * active_lines + high_tower_penalty)
+        line_score = (board_tiles + (10 * lines_cleared)) / float(
+            self.board_width * active_lines + high_tower_penalty
+        )
 
         line_pack_pct = [sum(x) / self.board.width for x in self.board.board]
 
@@ -294,25 +285,22 @@ class TetrisEnv(gym.Env):
         # TODO Do I still need to do this?
         state = self.board.board.copy()
         return state[np.newaxis, :, :]
-    
 
     @staticmethod
     def smoltris():
         bag = [Tetrominos.O, Tetrominos.DOT, Tetrominos.USCORE]
         return TetrisEnv(piece_bag=bag, board_height=10, board_width=5)
-    
+
     @staticmethod
     def tetris():
         return TetrisEnv()
-    
-
 
 
 class MinoBag(deque):
-    def __init__(self, tiles:list[int], seed:int, maxlen:int=10):
+    def __init__(self, tiles: list[int], seed: int, maxlen: int = 10):
         super().__init__(maxlen=maxlen)
         self.tiles = tiles
-        self.seed:int = None
+        self.seed: int = None
         self.r = random.Random(seed)
         self.populate()
 
@@ -324,15 +312,9 @@ class MinoBag(deque):
         ret = super().popleft()
         self.populate()
         return ret
-    
+
     def pull(self):
         return self.popleft()
 
     def __str__(self):
         return f"MinoBag({[Tetrominos.shape_name(x) for x in self]})"
-
-
-
-
-
-

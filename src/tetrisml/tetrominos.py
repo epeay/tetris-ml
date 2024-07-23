@@ -19,10 +19,8 @@ class Tetrominos:
         # X X
         # X X
         O: np.array([[1, 1], [1, 1]]),
-
         # X X X X
         I: np.array([[1, 1, 1, 1]]),
-
         # _ X X
         # X X _
         S: np.array([[0, 1, 1], [1, 1, 0]]),
@@ -31,7 +29,7 @@ class Tetrominos:
         J: np.array([[1, 0, 0], [1, 1, 1]]),
         L: np.array([[0, 0, 1], [1, 1, 1]]),
         DOT: np.array([[1]]),
-        USCORE: np.array([[1,1]])
+        USCORE: np.array([[1, 1]]),
     }
 
     int_name_lookup = [
@@ -43,9 +41,8 @@ class Tetrominos:
         (J, "J"),
         (L, "L"),
         (DOT, "D"),
-        (USCORE, "U")
+        (USCORE, "U"),
     ]
-
 
     # Stores patterns for each tetromino, at each rotation
     cache = {}
@@ -54,25 +51,25 @@ class Tetrominos:
         return len(Tetrominos.base_patterns.keys())
 
     @staticmethod
-    def shape_name(shape_id:int):
+    def shape_name(shape_id: int):
 
         # Find the shape name
         for id, name in Tetrominos.int_name_lookup:
             if id == shape_id:
                 return name
-            
+
         raise ValueError(f"Invalid shape id {shape_id}")
-    
+
     @staticmethod
-    def make_by_char(c:str):
+    def make_by_char(c: str):
         for id, char in Tetrominos.int_name_lookup:
             if char == c:
                 return Tetrominos.make(id)
 
         raise ValueError(f"Invalid shape character {c}")
-    
+
     @staticmethod
-    def get_id_by_char(c:str):
+    def get_id_by_char(c: str):
         for id, char in Tetrominos.int_name_lookup:
             if char == c:
                 return id
@@ -80,7 +77,7 @@ class Tetrominos:
         raise ValueError(f"Invalid shape character {c}")
 
     @staticmethod
-    def make(shape:int, rot=0):
+    def make(shape: int, rot=0):
         """
         shape:
         """
@@ -90,7 +87,7 @@ class Tetrominos:
                     np.array(pattern),
                     np.array(np.rot90(pattern)),
                     np.array(np.rot90(pattern, 2)),
-                    np.array(np.rot90(pattern, 3))
+                    np.array(np.rot90(pattern, 3)),
                 ]
 
         if shape not in Tetrominos.base_patterns.keys():
@@ -102,18 +99,14 @@ class Tetrominos:
         return ret
 
 
-
-
-
-
 class TetrominoPiece:
 
-    BLOCK = '▆'
+    BLOCK = "▆"
 
-    def __init__(self, shape:int, patterns):
-        self.shape:int = shape
-        self.pattern_list:list[NDArray] = patterns
-        self.pattern:NDArray = patterns[0]
+    def __init__(self, shape: int, patterns):
+        self.shape: int = shape
+        self.pattern_list: list[NDArray] = patterns
+        self.pattern: NDArray = patterns[0]
         self.rot = 0
 
     def __str__(self) -> str:
@@ -129,9 +122,11 @@ class TetrominoPiece:
             if not oneline:
                 ret.append("\n")
             else:
-                if i < len(pattern)-1:
-                    ret.append(" / ",)
-        ret = "".join(ret).replace('1', TetrominoPiece.BLOCK).replace('0', '_')
+                if i < len(pattern) - 1:
+                    ret.append(
+                        " / ",
+                    )
+        ret = "".join(ret).replace("1", TetrominoPiece.BLOCK).replace("0", "_")
         return "".join(ret)
 
     def to_dict(self):
@@ -190,7 +185,7 @@ class TetrominoPiece:
         """
         pattern = self.get_pattern()
         # pdb.set_trace()
-        ret = [len(pattern)+1 for x in range(len(pattern[0]))]
+        ret = [len(pattern) + 1 for x in range(len(pattern[0]))]
         # Iterates rows from top, down
         for ri in range(len(pattern)):
             # Given a T shape:
@@ -207,11 +202,11 @@ class TetrominoPiece:
             # Will return [1, 0, 1] for a T shape
 
         if max(ret) >= len(pattern):
-          print(f"Pattern:")
-          print(pattern)
-          print(f"Bottom Offsets: {ret}")
-          print(f"Shape: {self.shape}")
-          raise ValueError("Tetromino pattern has incomplete bottom offsets")
+            print(f"Pattern:")
+            print(pattern)
+            print(f"Bottom Offsets: {ret}")
+            print(f"Shape: {self.shape}")
+            raise ValueError("Tetromino pattern has incomplete bottom offsets")
 
         return ret
 
@@ -230,7 +225,11 @@ class TetrominoPiece:
         """
         pattern = self.get_pattern()
         ret = [0 for x in len(pattern[0])]
-        for ri, row in enumerate(range(pattern, )):
+        for ri, row in enumerate(
+            range(
+                pattern,
+            )
+        ):
             for col in pattern[row]:
                 if pattern[row][col] == 1:
                     ret[col] = max(ret[col], row)
@@ -244,5 +243,5 @@ Tetrominos.std_bag = [
     Tetrominos.Z,
     Tetrominos.T,
     Tetrominos.J,
-    Tetrominos.L
+    Tetrominos.L,
 ]

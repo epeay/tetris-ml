@@ -1,5 +1,3 @@
-
-
 # Everything must go
 
 from .tetrominos import *

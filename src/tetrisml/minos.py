@@ -1,21 +1,21 @@
-
-
 from .tetrominos import TetrominoPiece, Tetrominos
+
 
 class MinoShape:
     """
     A MinoShape is a single rotation of a Tetromino piece. It is a 2D array.
     Importantly, this class is meant to be immutable.
     """
-    def __init__(self, shape_id:int, rot:int=0):
-        self.shape:list[list[int]] = Tetrominos.make(shape_id, rot).pattern
-        self.shape_id:int = shape_id
-        self.shape_rot:int = rot
-        self.height:int = len(self.shape)
-        self.width:int = len(self.shape[0])
+
+    def __init__(self, shape_id: int, rot: int = 0):
+        self.shape: list[list[int]] = Tetrominos.make(shape_id, rot).pattern
+        self.shape_id: int = shape_id
+        self.shape_rot: int = rot
+        self.height: int = len(self.shape)
+        self.width: int = len(self.shape[0])
 
         # Private
-        self._bottom_gaps:list[int] = None
+        self._bottom_gaps: list[int] = None
 
     def __str__(self):
         return f"MinoShape(shape={self.shape})"
@@ -25,19 +25,17 @@ class MinoShape:
             "id": self.shape_id,
             "name": Tetrominos.shape_name(self.shape_id),
             "rot": self.shape_rot,
-            "shape": self.shape.tolist()
+            "shape": self.shape.tolist(),
         }
-    
-    @staticmethod
-    def from_jsonable(data:dict):
-        return MinoShape(data["id"], data["rot"])
 
+    @staticmethod
+    def from_jsonable(data: dict):
+        return MinoShape(data["id"], data["rot"])
 
     def by_name(self):
         return Tetrominos.shape_name(self.shape_id)
 
-
-    def get_piece(self)->TetrominoPiece:
+    def get_piece(self) -> TetrominoPiece:
         """
         Backtrack to the TetrominoPiece of this shape.
         """
@@ -66,7 +64,7 @@ class MinoShape:
             return self._bottom_gaps
 
         pattern = self.shape
-        ret = [len(pattern)+1 for x in range(len(pattern[0]))]
+        ret = [len(pattern) + 1 for x in range(len(pattern[0]))]
         # Iterates rows from top, down
         for ri in range(len(pattern)):
             # Given a T shape:
@@ -87,20 +85,17 @@ class MinoShape:
         return self._bottom_gaps
 
 
-
-
-
-
-class MinoPlacement():
-    def __init__(self,
-                 shape:MinoShape,
-                 bl_coords:tuple[int, int],
-                 gaps_by_col:list[int],
-                 reward:float
-                 ) -> None:
+class MinoPlacement:
+    def __init__(
+        self,
+        shape: MinoShape,
+        bl_coords: tuple[int, int],
+        gaps_by_col: list[int],
+        reward: float,
+    ) -> None:
         self.shape = shape
         self.bl_coords = bl_coords
-        self.reward:float = reward
+        self.reward: float = reward
 
         # At which columns does the piece not sit flush?
         # Field:      | Shape:
@@ -108,7 +103,7 @@ class MinoPlacement():
         # X X O       |      O
         # X X X       |
         # The gaps are [0, 0, 2]
-        self.gaps:list[int] = gaps_by_col
+        self.gaps: list[int] = gaps_by_col
         self.empty_tiles_created = sum(self.gaps)
         self.is_flush = self.empty_tiles_created == 0
 
@@ -119,23 +114,10 @@ class MinoPlacement():
             "gaps": self.gaps,
             "reward": self.reward,
             "empty_tiles_created": self.empty_tiles_created,
-            "is_flush": self.is_flush
+            "is_flush": self.is_flush,
         }
-    
+
     @staticmethod
-    def from_jsonable(data:dict):
+    def from_jsonable(data: dict):
         shape = MinoShape.from_jsonable(data["shape"])
-        return MinoPlacement(
-            shape, 
-            data["bl_coords"], 
-            data["gaps"], 
-            data["reward"]
-            )
-
-
-
-
-
-
-
-
+        return MinoPlacement(shape, data["bl_coords"], data["gaps"], data["reward"])

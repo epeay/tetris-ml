@@ -24,20 +24,21 @@ print(f"Using device {device}")
 
 
 from typing import NewType
-ModelAction = NewType("ModelAction", tuple[int,int])
+
+ModelAction = NewType("ModelAction", tuple[int, int])
 
 
-class ModelState():
-    def __init__(self, board:NDArray):
+class ModelState:
+    def __init__(self, board: NDArray):
 
         if len(board.shape) != 2:
             raise ValueError("Board must be 2D")
 
-        self.board:NDArray = board
+        self.board: NDArray = board
         # One-hot encoding of the current mino
-        self.mino:NDArray = None
+        self.mino: NDArray = None
 
-    def set_mino_one_hot(self, total:int, index:int):
+    def set_mino_one_hot(self, total: int, index: int):
         """
         param index must be zero-indexed
         """
@@ -45,10 +46,7 @@ class ModelState():
         self.mino[index] = 1
 
     def to_dict(self):
-        return {
-            "board": self.board.tolist(),
-            "mino": self.mino.tolist()
-        }
+        return {"board": self.board.tolist(), "mino": self.mino.tolist()}
 
     def get_linear_data(self) -> list[int]:
         if self.mino is None:
@@ -61,23 +59,23 @@ class ModelState():
         linear_data_tensor = torch.FloatTensor(self.get_linear_data())
         return board_tensor, linear_data_tensor
 
-    @staticmethod    
-    def from_dict(d:dict):
+    @staticmethod
+    def from_dict(d: dict):
         ret = ModelState(np.array(d["board"]))
         ret.mino = np.array(d["mino"])
         return ret
 
 
-
-
-
 class TetrisCNN(nn.Module):
-    def __init__(self, id,
-                 input_channels, 
-                 board_height, 
-                 board_width, 
-                 action_dim, 
-                 linear_layer_input_dim=0):
+    def __init__(
+        self,
+        id,
+        input_channels,
+        board_height,
+        board_width,
+        action_dim,
+        linear_layer_input_dim=0,
+    ):
         """
         Common param example:
             input_channels: 1
@@ -97,7 +95,9 @@ class TetrisCNN(nn.Module):
         conv_output_size = 64 * board_height * board_width
         # linear_data_input_size = self.conv2.out_channels * linear_layer_input_dim
 
-        self.fc1 = nn.Linear(conv_output_size + linear_layer_input_dim, 128)  # Adjust based on input size
+        self.fc1 = nn.Linear(
+            conv_output_size + linear_layer_input_dim, 128
+        )  # Adjust based on input size
         self.fc2 = nn.Linear(128, action_dim)
 
         self.intermediate_data = {}
@@ -111,10 +111,12 @@ class TetrisCNN(nn.Module):
 
         x_2 = torch.relu(self.conv2(x_1))
         self.intermediate_data["conv2_out"] = x_2.detach().clone()
-        
+
         # Register hook to capture gradients during the backward pass
-        x_2.register_hook(lambda grad: self.intermediate_gradients.update({'conv2': grad}))
-        
+        x_2.register_hook(
+            lambda grad: self.intermediate_gradients.update({"conv2": grad})
+        )
+
         x = x_2.view(x_2.size(0), -1)  # Flatten the CNN output
 
         # Scale up linear layer input to match batch size
@@ -125,18 +127,12 @@ class TetrisCNN(nn.Module):
         if len(linear_layer_input.shape) == 3 and linear_layer_input.shape[0] == 1:
             linear_layer_input = linear_layer_input.squeeze(1)
 
-
         x = torch.cat((x, linear_layer_input), dim=1)
 
         fc1_out = self.fc1(x)
 
         x = torch.relu(fc1_out)
         return self.fc2(x)
-
-
-
-
-
 
 
 class AgentGameInfo:
@@ -146,41 +142,45 @@ class AgentGameInfo:
         self.batch_episode = None
         self.batch_size = None
 
+
 class ModelCheckpoint(dict):
     def __init__(self):
-        self.model_state:dict = None
-        self.target_model_state:dict = None
-        self.optimizer_state:dict = None
-        self.replay_buffer:deque = None
-        self.exploration:float = None
-        self.episode:int = None
+        self.model_state: dict = None
+        self.target_model_state: dict = None
+        self.optimizer_state: dict = None
+        self.replay_buffer: deque = None
+        self.exploration: float = None
+        self.episode: int = None
 
     def __setattr__(self, key, value):
         """Class properties become dict key/value pairs"""
         self[key] = value
         super().__setattr__(key, value)
 
+
 class DQNAgent:
 
     MODE_UNSET = 0
     MODE_EXPERT_LEARNING = 1
 
-    def __init__(self, input_channels,
-                 board_height,
-                 board_width,
-                 action_dim,
-                 linear_data_dim=0,
-                 learning_rate=0.001,
-                 discount_factor=0.99,
-                 exploration_rate=1.0,
-                 exploration_decay=0.999,
-                 min_exploration_rate=0.01,
-                 replay_buffer_size=10000,
-                 batch_size=64,
-                 log_dir:str=None,
-                 load_path:str=None,
-                 model_id:str=None
-                 ):
+    def __init__(
+        self,
+        input_channels,
+        board_height,
+        board_width,
+        action_dim,
+        linear_data_dim=0,
+        learning_rate=0.001,
+        discount_factor=0.99,
+        exploration_rate=1.0,
+        exploration_decay=0.999,
+        min_exploration_rate=0.01,
+        replay_buffer_size=10000,
+        batch_size=64,
+        log_dir: str = None,
+        load_path: str = None,
+        model_id: str = None,
+    ):
         """
         If log_dir is not specified, no logs will be written.
         """
@@ -199,8 +199,22 @@ class DQNAgent:
         self.board_height = board_height
         self.board_width = board_width
 
-        self.model = TetrisCNN(model_id, input_channels, board_height + 4, board_width, action_dim, linear_data_dim)
-        self.target_model = TetrisCNN(model_id, input_channels, board_height + 4, board_width, action_dim, linear_data_dim)
+        self.model = TetrisCNN(
+            model_id,
+            input_channels,
+            board_height + 4,
+            board_width,
+            action_dim,
+            linear_data_dim,
+        )
+        self.target_model = TetrisCNN(
+            model_id,
+            input_channels,
+            board_height + 4,
+            board_width,
+            action_dim,
+            linear_data_dim,
+        )
         self.update_target_model()
 
         self.optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
@@ -209,9 +223,7 @@ class DQNAgent:
 
         self.writer = SummaryWriter(log_dir) if log_dir is not None else None
 
-
         self.agent_episode_count = 0
-
 
     def save_model(self, abspath):
         """
@@ -228,7 +240,7 @@ class DQNAgent:
         torch.save(checkpoint, abspath)
 
     def load_model(self, abspath):
-        checkpoint:ModelCheckpoint = torch.load(abspath)
+        checkpoint: ModelCheckpoint = torch.load(abspath)
 
         self.model.load_state_dict(checkpoint.model_state)
         self.target_model.load_state_dict(checkpoint.target_model_state)
@@ -239,9 +251,7 @@ class DQNAgent:
         if self.agent_episode_count is None:
             self.agent_episode_count = 0
 
-
-
-    def log_game_record(self, game_record:TetrisGameRecord, envstats:EnvStats):
+    def log_game_record(self, game_record: TetrisGameRecord, envstats: EnvStats):
 
         if self.writer is None:
             print("WARNING: Not persisting game logs to disk")
@@ -265,7 +275,9 @@ class DQNAgent:
         r.invalid_move_pct = r.invalid_moves / (r.moves + r.invalid_moves)
         r.avg_time_per_move = r.duration_ns / r.moves / 1000000000
 
-        print(f"Episode {r.agent_info.batch_episode} of {r.agent_info.batch_size}. Agent run #{r.agent_info.agent_episode}")
+        print(
+            f"Episode {r.agent_info.batch_episode} of {r.agent_info.batch_size}. Agent run #{r.agent_info.agent_episode}"
+        )
         print(f"Moves: {r.moves}")
         print(f"Invalid Moves: {r.invalid_moves}")
         print(f"Lines cleared: {r.lines_cleared}  ({str(r.cleared_by_size)})")
@@ -283,31 +295,44 @@ class DQNAgent:
         if not self.writer:
             return
 
-        self.writer.add_scalar('Episode/Total Moves', r.moves, episode)
-        self.writer.add_scalar('Episode/% Invalid Moves', r.invalid_moves, episode)
-        self.writer.add_scalar('Episode/Lines Cleared', r.lines_cleared, episode)
-        self.writer.add_scalar('Episode/Cumulative Reward', r.cumulative_reward, episode)
-        self.writer.add_scalar('Episode/Prediction Rate', predict_rate, episode)
-        self.writer.add_scalar('Episode/Duration', r.duration_ns / 1000000000, episode)
-        self.writer.add_scalar('Episode/Avg Time Per Move', r.avg_time_per_move, episode)
-        self.writer.add_scalar('Episode/Predict Wins', r.predict_wins, episode)
-        self.writer.add_scalar('Agent/Total Lines Cleared', envstats.total_lines_cleared, episode)
+        self.writer.add_scalar("Episode/Total Moves", r.moves, episode)
+        self.writer.add_scalar("Episode/% Invalid Moves", r.invalid_moves, episode)
+        self.writer.add_scalar("Episode/Lines Cleared", r.lines_cleared, episode)
+        self.writer.add_scalar(
+            "Episode/Cumulative Reward", r.cumulative_reward, episode
+        )
+        self.writer.add_scalar("Episode/Prediction Rate", predict_rate, episode)
+        self.writer.add_scalar("Episode/Duration", r.duration_ns / 1000000000, episode)
+        self.writer.add_scalar(
+            "Episode/Avg Time Per Move", r.avg_time_per_move, episode
+        )
+        self.writer.add_scalar("Episode/Predict Wins", r.predict_wins, episode)
+        self.writer.add_scalar(
+            "Agent/Total Lines Cleared", envstats.total_lines_cleared, episode
+        )
 
         if r.loss is not None:
-            self.writer.add_scalar('Episode/Loss', r.loss, episode)
+            self.writer.add_scalar("Episode/Loss", r.loss, episode)
 
         # Used to more easily identify runs that don't
         # have many episodes, for culling.
-        self.writer.add_scalar('Agent/Episode', episode, episode)
+        self.writer.add_scalar("Agent/Episode", episode, episode)
 
     def save_game_records(self, filename="game_records.json"):
-        with open(filename, 'w') as f:
+        with open(filename, "w") as f:
             json.dump([record.__dict__ for record in self.game_records], f)
 
     def update_target_model(self):
         self.target_model.load_state_dict(self.model.state_dict())
 
-    def remember(self, state:ModelState, action:ModelAction, reward, next_state:ModelState, done):
+    def remember(
+        self,
+        state: ModelState,
+        action: ModelAction,
+        reward,
+        next_state: ModelState,
+        done,
+    ):
         state_dict = state.to_dict()
         next_state_dict = next_state.to_dict()
 
@@ -319,20 +344,19 @@ class DQNAgent:
         #     import sys
         #     sys.exit()
 
-
-    def guess(self, m:MinoShape) -> ModelAction:
+    def guess(self, m: MinoShape) -> ModelAction:
         """
         Generates a random action based on the action dimensions.
         If mino is specified, col will not cause the piece to go out of bounds.
         """
         rotation = np.random.choice(4)
-        m = MinoShape(m.shape_id, rotation) # Change rotation
+        m = MinoShape(m.shape_id, rotation)  # Change rotation
         valid_width = self.board_width - m.width
         col = np.random.choice(valid_width)
-        
+
         return (col, rotation)
 
-    def predict(self, state:ModelState) -> ModelAction:
+    def predict(self, state: ModelState) -> ModelAction:
         # (24, 10) -> (1, 1, 24, 10)
         # For (batch_size, channels, height, width)
         board = torch.FloatTensor(state.board)
@@ -347,7 +371,9 @@ class DQNAgent:
         action_index = torch.argmax(q_values).item()
         return (action_index // 4, action_index % 4)
 
-    def choose_action(self, state:ModelState, m:MinoShape) -> tuple[ModelAction, bool]:
+    def choose_action(
+        self, state: ModelState, m: MinoShape
+    ) -> tuple[ModelAction, bool]:
 
         if random.random() < self.exploration_rate:
             return self.guess(m), False
@@ -355,15 +381,20 @@ class DQNAgent:
             action_index = self.predict(state)
             return action_index, True
 
-
-    def run(self, env:TetrisEnv, num_episodes=10, train=True, playback_list:list[GameHistory] = []):
+    def run(
+        self,
+        env: TetrisEnv,
+        num_episodes=10,
+        train=True,
+        playback_list: list[GameHistory] = [],
+    ):
         total_rewards = []
         target_update_interval = 10
 
         line_clear_watermark = 2
         unsaved_game_streak = 0
 
-        # Let's wait until the end of the game to 
+        # Let's wait until the end of the game to
         # determine whether to store these states or not.
         rememberable = []
 
@@ -384,8 +415,7 @@ class DQNAgent:
             if env.record.moves > 0:
                 self.game_records.append(env.record)
 
-            move_list:list[MinoPlacement] = []
-
+            move_list: list[MinoPlacement] = []
 
             if is_playback:
                 board = env.reset(seed=playback.seed)
@@ -411,44 +441,48 @@ class DQNAgent:
 
                 # Without a copy, the state changes before being printed
                 curr_state = ModelState(env.board.board.copy())
-                curr_state.set_mino_one_hot(Tetrominos.get_num_tetrominos(), env.current_mino.shape)
+                curr_state.set_mino_one_hot(
+                    Tetrominos.get_num_tetrominos(), env.current_mino.shape
+                )
 
                 if is_playback:
                     if placement.shape.shape_id != env.current_mino.shape_id:
                         print("Mismatched shapes")
-                        print(f"Expected {env.current_mino.shape_id} but got {placement.shape.shape_id}")
+                        print(
+                            f"Expected {env.current_mino.shape_id} but got {placement.shape.shape_id}"
+                        )
                         print(f"Planned move: {placement.shape}")
                         print(f"Current piece: {env.current_mino}")
                         raise ValueError("Mismatched shapes")
 
-                    action = (placement.bl_coords[1]-1, placement.shape.shape_rot)
+                    action = (placement.bl_coords[1] - 1, placement.shape.shape_rot)
                     planned_shape = placement.shape
                     is_prediction = False
                 else:
                     if train:
-                        action, is_prediction = self.choose_action(curr_state, env.current_mino)
+                        action, is_prediction = self.choose_action(
+                            curr_state, env.current_mino
+                        )
                     else:
                         action = self.predict(curr_state)
                         is_prediction = True
 
-                
                 most_recent_board = env._get_board_state()
                 most_recent_board = most_recent_board[np.newaxis, :, :, :]
-
-
 
                 # Do the thing. Apply the action, choose the next piece, etc
                 # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
                 next_board_state, reward, done, info = env.step(action)
                 # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-                print(".", end='')
+                print(".", end="")
 
                 next_state = ModelState(next_board_state.squeeze(0))
-                next_state.set_mino_one_hot(Tetrominos.get_num_tetrominos(), env.current_mino.shape)
+                next_state.set_mino_one_hot(
+                    Tetrominos.get_num_tetrominos(), env.current_mino.shape
+                )
 
                 # if info.valid_action:
                 #     TetrisBoard.render_state(curr_state.board, planned_shape, (21, col+1), title="Planned move")
-
 
                 info.is_predict = is_prediction
                 env.record.is_predict.append(is_prediction)
@@ -458,7 +492,7 @@ class DQNAgent:
                 next_placement = next(move_itr, None)
 
                 if not done and is_playback and next_placement is None:
-                    # The playback has ended. We're done whether or 
+                    # The playback has ended. We're done whether or
                     # not the game is over.
                     done = True
 
@@ -486,7 +520,7 @@ class DQNAgent:
             if game_state.lines_cleared >= line_clear_watermark:
                 for s in rememberable:
                     self.remember(*s)
-                
+
                 line_clear_watermark += 3
                 unsaved_game_streak = 0
             else:
@@ -494,19 +528,17 @@ class DQNAgent:
                 unsaved_game_streak += 1
                 line_clear_watermark -= max(2, line_clear_watermark * 0.990)
                 print(f"Unsaved game streak: {unsaved_game_streak}")
-                
+
             rememberable = []
 
-            
             ainfo = AgentGameInfo()
             ainfo.agent_episode = self.agent_episode_count
             ainfo.loss = loss
 
             if self.agent_episode_count % 1000 == 0:
-                self.save_model(f"storage/models/{self.model.id}-ep{self.agent_episode_count}.pth")
-
-
-
+                self.save_model(
+                    f"storage/models/{self.model.id}-ep{self.agent_episode_count}.pth"
+                )
 
             # X of Y for this current execution run of the agent
             # Within the lifecycle of this method execution.
@@ -518,7 +550,6 @@ class DQNAgent:
             if train and not is_playback:
                 # If in playback mode, we'll set the exploration rate, later
                 self.decay_exploration_rate()
-
 
             record: TetrisGameRecord = env.record
             record.loss = loss
@@ -533,13 +564,14 @@ class DQNAgent:
 
         return total_rewards
 
-
     def replay(self):
         if len(self.replay_buffer) < self.batch_size:
             return
 
         minibatch = random.sample(self.replay_buffer, self.batch_size)
-        composite_states, actions, rewards, composite_next_states, dones = zip(*minibatch)
+        composite_states, actions, rewards, composite_next_states, dones = zip(
+            *minibatch
+        )
 
         # Parse states from dicts
         composite_states = [ModelState.from_dict(s) for s in composite_states]
@@ -562,16 +594,22 @@ class DQNAgent:
         n_boards = torch.FloatTensor(n_boards)
         n_lds = torch.FloatTensor(n_lds)
 
-        actions = torch.LongTensor([a[0] * 4 + a[1] for a in actions])  # Ensure action is within valid range
+        actions = torch.LongTensor(
+            [a[0] * 4 + a[1] for a in actions]
+        )  # Ensure action is within valid range
         rewards = torch.FloatTensor(rewards)
         dones = torch.FloatTensor(dones)
 
-        boards = boards.unsqueeze(1) # Add channel dimension
+        boards = boards.unsqueeze(1)  # Add channel dimension
         n_boards = n_boards.unsqueeze(1)
 
-        current_q_values = self.model(boards, lds).gather(1, actions.unsqueeze(1)).unsqueeze(1)
+        current_q_values = (
+            self.model(boards, lds).gather(1, actions.unsqueeze(1)).unsqueeze(1)
+        )
         max_next_q_values = self.target_model(n_boards, n_lds).max(1)[0]
-        expected_q_values = rewards + (self.discount_factor * max_next_q_values * (1 - dones))
+        expected_q_values = rewards + (
+            self.discount_factor * max_next_q_values * (1 - dones)
+        )
 
         loss = self.loss_fn(current_q_values, expected_q_values)
 
@@ -582,8 +620,6 @@ class DQNAgent:
         return loss
 
     def decay_exploration_rate(self):
-        self.exploration_rate = max(self.min_exploration_rate, self.exploration_rate * self.exploration_decay)
-
-
-
-
+        self.exploration_rate = max(
+            self.min_exploration_rate, self.exploration_rate * self.exploration_decay
+        )
