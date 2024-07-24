@@ -8,7 +8,6 @@ import tensorflow
 plt.ion()
 
 from .logging import GameHistory
-from utils import ipython
 
 
 class GameRuns:

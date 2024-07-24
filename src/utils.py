@@ -1,15 +1,17 @@
 import random
 import subprocess
 
+
 def get_git_hash():
-    
+
     # TODO What if we're not in a git repo?
 
-    ret = subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD'])
-    ret = ret.decode('ascii').strip()
+    ret = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"])
+    ret = ret.decode("ascii").strip()
     return ret
 
 
+# fmt: off
 adjectives = [
     "angry", "basic", "brave", "brief", "calm", "chill", "clean", "clear",
     "close", "crazy", "crisp", "cruel", "dense", "dirty", "dizzy", "eager",
@@ -38,6 +40,8 @@ common_nouns = [
     "night", "piano", "plane", "plant", "river", "shape", "shirt", "sleep",
     "smile", "sound", "stone", "table", "thumb", "train", "voice", "water"
 ]
+# fmt: on
+
 
 def word_id():
     """
@@ -46,10 +50,10 @@ def word_id():
     return f"{random.choice(adjectives)}{random.choice(common_nouns)}"
 
 
-
 def ipython():
     """
     Start an IPython session
     """
     import IPython
+
     IPython.embed()

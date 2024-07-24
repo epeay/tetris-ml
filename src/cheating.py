@@ -38,7 +38,7 @@ def find_possible_moves(env: TetrisEnv, s: MinoShape) -> list[MinoPlacement]:
 
         piece: TetrominoPiece = s.get_piece()
         backup_rows = board.place_shape(s, lcoords)
-        reward = env._calculate_reward()
+        reward = env.calculate_reward()
 
         # Revert the board
         for r in range(len(backup_rows)):
@@ -50,18 +50,16 @@ def find_possible_moves(env: TetrisEnv, s: MinoShape) -> list[MinoPlacement]:
     return options
 
 
-def get_future_reward(
-    board: TetrisEnv, s: MinoShape, lcoords: tuple[int, int]
-) -> float:
+def get_future_reward(e: TetrisEnv, s: MinoShape, lcoords: tuple[int, int]) -> float:
     """
     Given a board, mino, and placement coords, returns the reward of that
     placement. Temporarily modifies the board, but reverts.
     """
-    backup_rows = board.board.place_shape(s, lcoords)
-    reward = board._calculate_reward()
+    backup_rows = e.board.place_shape(s, lcoords)
+    reward = e._calculate_reward()
 
     # Revert the board
     for r in range(len(backup_rows)):
-        board.board.board[lcoords[0] - 1 + r] = backup_rows[r]
+        e.board.board[lcoords[0] - 1 + r] = backup_rows[r]
 
     return reward

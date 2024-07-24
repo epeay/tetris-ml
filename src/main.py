@@ -15,6 +15,8 @@ import utils
 from cheating import *
 from viz import *
 import time
+from tetrisml.env import PlaySession
+from player import CheatingPlayer, PlaybackPlayer
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 import tensorflow as tf
@@ -181,17 +183,33 @@ def keep_training(agent):
 
 
 def run_from_playback(path: str):
-    playback = json.load(open(path, "r"))
-    playback = [GameHistory.from_jsonable(g) for g in playback["games"].values()]
     num_games = len(playback)
     # episode count doesn't matter when playback is specified
     agent.run(e, 10, playback_list=[playback[0]])
 
 
-# plt.imshow(heatmap, cmap='viridis')
-# plt.colorbar()
-# plt.savefig(f"densedrink-ep1000-grad_cam_heatmap.png")
-# plt.close()
+e = TetrisEnv.smoltris()
+
+# playback_path = os.path.join(
+#     config.workspace_dir, "game_logs_240718_215902_expert_smoltris.json"
+# )
+# p = PlaybackPlayer.from_file(playback_path)
+
+p = CheatingPlayer()
+sesh = PlaySession(e, p)
+
+# sesh.events.register(E_STEP_COMPLETE, lambda: print(".", end=""))
+
+
+def on_mino_settled():
+    print("")
+    e.render()
+    time.sleep(0.3)
+    print("")
+
+
+sesh.env.events.register(E_MINO_SETTLED, on_mino_settled)
+sesh.play(10)
 
 
 # playback_path = os.path.join(config.workspace_dir, "game_logs_240718_215902_expert_smoltris.json")

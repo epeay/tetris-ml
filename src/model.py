@@ -14,18 +14,13 @@ from torch.utils.tensorboard import SummaryWriter
 import random
 from collections import deque
 
-import cheating
+from player import BasePlayer
 
 import utils
 from tetrisml import *
 
 device = torch.device("cpu")
 print(f"Using device {device}")
-
-
-from typing import NewType
-
-ModelAction = NewType("ModelAction", tuple[int, int])
 
 
 class ModelState:
@@ -225,11 +220,15 @@ class DQNAgent:
 
         self.agent_episode_count = 0
 
-    def save_model(self, abspath):
+    def save_model(self, abspath, overwrite=False):
         """
         Saves the model to the specified path. Does not include training
         parameters like exploration decay.
         """
+
+        if not overwrite and os.path.exists(abspath):
+            raise ValueError(f"Will not overwrite file: {abspath}")
+
         checkpoint = ModelCheckpoint()
         checkpoint.model_state = self.model.state_dict()
         checkpoint.target_model_state = self.target_model.state_dict()
@@ -338,21 +337,15 @@ class DQNAgent:
 
         self.replay_buffer.append((state_dict, action, reward, next_state_dict, done))
 
-        # if len(self.replay_buffer) == 50:
-        #     visualize_multiple_boards([r[0]["board"] for r in self.replay_buffer], filename="Replay Buffer.png")
-        #     visualize_multiple_boards([r[3]["board"] for r in self.replay_buffer], filename="Replay Buffer Next State.png")
-        #     import sys
-        #     sys.exit()
-
     def guess(self, m: MinoShape) -> ModelAction:
         """
         Generates a random action based on the action dimensions.
         If mino is specified, col will not cause the piece to go out of bounds.
         """
         rotation = np.random.choice(4)
-        m = MinoShape(m.shape_id, rotation)  # Change rotation
+        m = MinoShape(m.shape_id, rotation)
         valid_width = self.board_width - m.width
-        col = np.random.choice(valid_width)
+        col = np.random.choice(valid_width)  # range [0, value_width)
 
         return (col, rotation)
 
@@ -386,7 +379,6 @@ class DQNAgent:
         env: TetrisEnv,
         num_episodes=10,
         train=True,
-        playback_list: list[GameHistory] = [],
     ):
         total_rewards = []
         target_update_interval = 10
@@ -398,16 +390,7 @@ class DQNAgent:
         # determine whether to store these states or not.
         rememberable = []
 
-        playback = None
-        playback_itr = iter(playback_list)
-
-        is_playback = len(playback_list) > 0
-        if is_playback and num_episodes != len(playback_list):
-            print("WARN: num_episodes ignored when using playback_list")
-            num_episodes = len(playback_list)
-
         for episode in range(num_episodes):
-            playback = next(playback_itr, None)
             self.agent_episode_count += 1
 
             # Capture the most recent game record.
@@ -415,29 +398,18 @@ class DQNAgent:
             if env.record.moves > 0:
                 self.game_records.append(env.record)
 
-            move_list: list[MinoPlacement] = []
-
-            if is_playback:
-                board = env.reset(seed=playback.seed)
-                move_list = playback.placements
-            else:
-                board = env.reset()
-
-            move_itr = iter(move_list)
+            board = env.reset()
             step_count = 0
             total_reward = 0
             done = False
             loss = None
             record_game = False
 
-            # Also iterates after step()
-            placement = next(move_itr, None)
-
-            is_prediction = False
-
             while not done:
                 loss = None
                 planned_shape = None
+
+                is_prediction = False
 
                 # Without a copy, the state changes before being printed
                 curr_state = ModelState(env.board.board.copy())
@@ -445,36 +417,18 @@ class DQNAgent:
                     Tetrominos.get_num_tetrominos(), env.current_mino.shape
                 )
 
-                if is_playback:
-                    if placement.shape.shape_id != env.current_mino.shape_id:
-                        print("Mismatched shapes")
-                        print(
-                            f"Expected {env.current_mino.shape_id} but got {placement.shape.shape_id}"
-                        )
-                        print(f"Planned move: {placement.shape}")
-                        print(f"Current piece: {env.current_mino}")
-                        raise ValueError("Mismatched shapes")
-
-                    action = (placement.bl_coords[1] - 1, placement.shape.shape_rot)
-                    planned_shape = placement.shape
-                    is_prediction = False
+                if train:
+                    action, is_prediction = self.choose_action(
+                        curr_state, env.current_mino
+                    )
                 else:
-                    if train:
-                        action, is_prediction = self.choose_action(
-                            curr_state, env.current_mino
-                        )
-                    else:
-                        action = self.predict(curr_state)
-                        is_prediction = True
-
-                most_recent_board = env._get_board_state()
-                most_recent_board = most_recent_board[np.newaxis, :, :, :]
+                    action = self.predict(curr_state)
+                    is_prediction = True
 
                 # Do the thing. Apply the action, choose the next piece, etc
                 # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
                 next_board_state, reward, done, info = env.step(action)
                 # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-                print(".", end="")
 
                 next_state = ModelState(next_board_state.squeeze(0))
                 next_state.set_mino_one_hot(
@@ -488,16 +442,9 @@ class DQNAgent:
                 env.record.is_predict.append(is_prediction)
                 step_count += 1
 
-                # Stage the next placement so we can peek at it.
-                next_placement = next(move_itr, None)
-
-                if not done and is_playback and next_placement is None:
-                    # The playback has ended. We're done whether or
-                    # not the game is over.
-                    done = True
-
                 # Enforce move limit unless we're in playback mode
-                if env.record.moves >= 100 and not is_playback:
+                # TODO Move this to a config var
+                if env.record.moves >= 100:
                     print("Hit move cap")
                     done = True
 
@@ -506,10 +453,6 @@ class DQNAgent:
                     self.remember(curr_state, action, reward, next_state, done)
                     loss = self.replay()
 
-                # Prep for next turn
-                placement = next_placement
-                next_placement = None
-
                 board = next_state
                 total_reward += reward
 
@@ -517,28 +460,11 @@ class DQNAgent:
             env.close_episode()
             game_state = env.record
 
-            if game_state.lines_cleared >= line_clear_watermark:
-                for s in rememberable:
-                    self.remember(*s)
-
-                line_clear_watermark += 3
-                unsaved_game_streak = 0
-            else:
-                print(f"NOT REMEMBERING GAME")
-                unsaved_game_streak += 1
-                line_clear_watermark -= max(2, line_clear_watermark * 0.990)
-                print(f"Unsaved game streak: {unsaved_game_streak}")
-
             rememberable = []
 
             ainfo = AgentGameInfo()
             ainfo.agent_episode = self.agent_episode_count
             ainfo.loss = loss
-
-            if self.agent_episode_count % 1000 == 0:
-                self.save_model(
-                    f"storage/models/{self.model.id}-ep{self.agent_episode_count}.pth"
-                )
 
             # X of Y for this current execution run of the agent
             # Within the lifecycle of this method execution.
@@ -547,14 +473,11 @@ class DQNAgent:
             ainfo.exploration_rate = self.exploration_rate if train else 0
             env.record.agent_info = ainfo
 
-            if train and not is_playback:
-                # If in playback mode, we'll set the exploration rate, later
+            if train:
                 self.decay_exploration_rate()
 
             record: TetrisGameRecord = env.record
             record.loss = loss
-            print(f"GAME OVER")
-            env.render()
             self.log_game_record(record, env.stats)
             total_rewards.append(total_reward)
 
@@ -623,3 +546,23 @@ class DQNAgent:
         self.exploration_rate = max(
             self.min_exploration_rate, self.exploration_rate * self.exploration_decay
         )
+
+
+class ModelPlayer(BasePlayer):
+    def __init__(self, model: DQNAgent):
+        self.model = model
+
+    def play(self, env: TetrisEnv):
+        pass
+
+    def make_model_state(self, e: TetrisEnv) -> ModelState:
+        state = ModelState(e.board)
+        state.set_mino_one_hot(Tetrominos.get_num_tetrominos(), e.current_mino.shape_id)
+
+
+class AgentPlayer(BasePlayer):
+    def __init__(self, agent: DQNAgent):
+        self.agent = agent
+
+    def play(self, e: TetrisEnv):
+        pass

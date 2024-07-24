@@ -15,22 +15,39 @@ class Tetrominos:
     DOT = 7
     USCORE = 8
 
+    # fmt: off
     base_patterns = {
+        
         # X X
         # X X
-        O: np.array([[1, 1], [1, 1]]),
+        O: np.array([[1, 1], 
+                     [1, 1]]),
+
         # X X X X
         I: np.array([[1, 1, 1, 1]]),
+
         # _ X X
         # X X _
-        S: np.array([[0, 1, 1], [1, 1, 0]]),
-        Z: np.array([[1, 1, 0], [0, 1, 1]]),
-        T: np.array([[1, 1, 1], [0, 1, 0]]),
-        J: np.array([[1, 0, 0], [1, 1, 1]]),
-        L: np.array([[0, 0, 1], [1, 1, 1]]),
+        S: np.array([[0, 1, 1], 
+                     [1, 1, 0]]),
+
+        Z: np.array([[1, 1, 0], 
+                     [0, 1, 1]]),
+
+        T: np.array([[1, 1, 1], 
+                     [0, 1, 0]]),
+
+        J: np.array([[1, 0, 0], 
+                     [1, 1, 1]]),
+
+        L: np.array([[0, 0, 1], 
+                     [1, 1, 1]]),
+
         DOT: np.array([[1]]),
+
         USCORE: np.array([[1, 1]]),
     }
+    # fmt: on
 
     int_name_lookup = [
         (O, "O"),
@@ -83,12 +100,30 @@ class Tetrominos:
         """
         if not Tetrominos.cache:
             for id, pattern in Tetrominos.base_patterns.items():
+                # To my surprise, the rotations are counter-clockwise by
+                # default. This will make the rotations appear to be clockwise.
+                # fmt: off
                 Tetrominos.cache[id] = [
+
+                    # x
+                    # x x x
                     np.array(pattern),
-                    np.array(np.rot90(pattern)),
-                    np.array(np.rot90(pattern, 2)),
+
+                    # x x
+                    # x
+                    # x
                     np.array(np.rot90(pattern, 3)),
+
+                    # x x x
+                    #     x
+                    np.array(np.rot90(pattern, 2)),
+
+                    #   x
+                    #   x
+                    # x x
+                    np.array(np.rot90(pattern, 1)),
                 ]
+                # fmt: on
 
         if shape not in Tetrominos.base_patterns.keys():
             raise ValueError("Invalid shape")
