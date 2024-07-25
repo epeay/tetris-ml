@@ -44,6 +44,9 @@ class TetrisBoard:
 
         return len(to_delete)
 
+    def export_board(self):
+        return self.board.copy()
+
     def place_shape(
         self, s: MinoShape, logical_coords: tuple[int, int]
     ) -> list[NDArray]:

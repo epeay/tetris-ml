@@ -1,9 +1,9 @@
+import json
 import random
-from tetrisml import TetrisBoard, MinoShape, TetrisEnv, BasePlayer
+from tetrisml import MinoShape, TetrisEnv, BasePlayer
 from tetrisml.logging import GameHistory
 from tetrisml.env import ModelAction
 from cheating import find_possible_moves
-from tetrisml.minos import MinoPlacement
 import numpy as np
 
 
@@ -96,6 +96,7 @@ class PlaybackPlayer(BasePlayer):
     @staticmethod
     def from_file(path: str):
         with open(path, "r") as f:
+            playback = json.load(f)
             playback = [
                 GameHistory.from_jsonable(g) for g in playback["games"].values()
             ]

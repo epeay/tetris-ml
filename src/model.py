@@ -13,11 +13,13 @@ import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
 import random
 from collections import deque
+import os
 
 from player import BasePlayer
 
 import utils
-from tetrisml import *
+from tetrisml import TetrisEnv, TetrisGameRecord, EnvStats, ModelAction, MinoShape
+from tetrisml import Tetrominos
 
 device = torch.device("cpu")
 print(f"Using device {device}")
@@ -153,7 +155,19 @@ class ModelCheckpoint(dict):
         super().__setattr__(key, value)
 
 
-class DQNAgent:
+class ModelMemory:
+    def __init__(self):
+        self.state: ModelState = None
+        self.action: ModelAction = None
+        self.reward: float = None
+        self.next_state: ModelState = None
+        self.done: bool = None
+
+    def to_tuple(self) -> tuple:
+        return (self.state, self.action, self.reward, self.next_state, self.done)
+
+
+class DQNAgent(BasePlayer):
 
     MODE_UNSET = 0
     MODE_EXPERT_LEARNING = 1
@@ -193,6 +207,8 @@ class DQNAgent:
 
         self.board_height = board_height
         self.board_width = board_width
+
+        self.pending_memory = ModelMemory()
 
         self.model = TetrisCNN(
             model_id,
@@ -247,7 +263,7 @@ class DQNAgent:
         self.replay_buffer = checkpoint.replay_buffer
         self.exploration_rate = checkpoint.exploration
         self.agent_episode_count = checkpoint.episode
-        if self.agent_episode_count is None:
+        if self.agent_episode_count is None:  # For backward compatibility
             self.agent_episode_count = 0
 
     def log_game_record(self, game_record: TetrisGameRecord, envstats: EnvStats):
@@ -374,6 +390,54 @@ class DQNAgent:
             action_index = self.predict(state)
             return action_index, True
 
+    def make_model_state(self, e: TetrisEnv) -> ModelState:
+        state = ModelState(e.board.export_board())
+        state.set_mino_one_hot(Tetrominos.get_num_tetrominos(), e.current_mino.shape_id)
+        return state
+
+    def play(self, env: TetrisEnv) -> ModelAction:
+
+        self.pending_memory = ModelMemory()
+
+        curr_state = self.make_model_state(env)
+        action, is_prediction = self.choose_action(curr_state, env.current_mino)
+
+        self.pending_memory.state = curr_state
+
+        self.pending_memory.action = action
+
+        return action
+
+    def on_action_commit(self, env: TetrisEnv, action: ModelAction, done: bool):
+
+        # Do the thing. Apply the action, choose the next piece, etc
+        # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        next_board_state, reward, done, info = env.step(action)
+        # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+        next_state = ModelState(next_board_state.squeeze(0))
+        next_state.set_mino_one_hot(
+            Tetrominos.get_num_tetrominos(), env.current_mino.shape
+        )
+
+        # if info.valid_action:
+        #     TetrisBoard.render_state(curr_state.board, planned_shape, (21, col+1), title="Planned move")
+
+        # TODO Move this to a config var
+        if env.record.moves >= 100:
+            print("Hit move cap")
+            done = True
+
+        self.pending_memory.next_state = self.make_model_state(env)
+        self.pending_memory.done = done
+        self.reward = info.lines_cleared
+
+        memory = self.pending_memory.to_tuple()
+
+        self.remember(*memory)
+
+        loss = self.replay()
+
     def run(
         self,
         env: TetrisEnv,
@@ -383,12 +447,8 @@ class DQNAgent:
         total_rewards = []
         target_update_interval = 10
 
-        line_clear_watermark = 2
-        unsaved_game_streak = 0
-
         # Let's wait until the end of the game to
         # determine whether to store these states or not.
-        rememberable = []
 
         for episode in range(num_episodes):
             self.agent_episode_count += 1
@@ -399,68 +459,17 @@ class DQNAgent:
                 self.game_records.append(env.record)
 
             board = env.reset()
-            step_count = 0
             total_reward = 0
             done = False
             loss = None
             record_game = False
 
             while not done:
-                loss = None
-                planned_shape = None
-
-                is_prediction = False
-
-                # Without a copy, the state changes before being printed
-                curr_state = ModelState(env.board.board.copy())
-                curr_state.set_mino_one_hot(
-                    Tetrominos.get_num_tetrominos(), env.current_mino.shape
-                )
-
-                if train:
-                    action, is_prediction = self.choose_action(
-                        curr_state, env.current_mino
-                    )
-                else:
-                    action = self.predict(curr_state)
-                    is_prediction = True
-
-                # Do the thing. Apply the action, choose the next piece, etc
-                # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-                next_board_state, reward, done, info = env.step(action)
-                # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-
-                next_state = ModelState(next_board_state.squeeze(0))
-                next_state.set_mino_one_hot(
-                    Tetrominos.get_num_tetrominos(), env.current_mino.shape
-                )
-
-                # if info.valid_action:
-                #     TetrisBoard.render_state(curr_state.board, planned_shape, (21, col+1), title="Planned move")
-
-                info.is_predict = is_prediction
-                env.record.is_predict.append(is_prediction)
-                step_count += 1
-
-                # Enforce move limit unless we're in playback mode
-                # TODO Move this to a config var
-                if env.record.moves >= 100:
-                    print("Hit move cap")
-                    done = True
-
-                if train:
-                    # rememberable.append((curr_state, action, reward, next_state, done))
-                    self.remember(curr_state, action, reward, next_state, done)
-                    loss = self.replay()
-
-                board = next_state
-                total_reward += reward
+                self.play(env)
 
             # We're done
             env.close_episode()
             game_state = env.record
-
-            rememberable = []
 
             ainfo = AgentGameInfo()
             ainfo.agent_episode = self.agent_episode_count

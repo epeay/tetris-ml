@@ -14,6 +14,13 @@ from tetrisml.minos import MinoPlacement, MinoShape
 from tetrisml.board import TetrisBoard
 from tetrisml.logging import TetrisGameRecord
 
+import numpy as np
+from numpy import ndarray
+
+from typing import NewType
+
+ModelAction = NewType("ModelAction", tuple[int, int])
+
 
 class ActionFeedback:
     def __init__(self, valid_action=False):
@@ -21,6 +28,10 @@ class ActionFeedback:
         # embedded in a wall, for example.
         self.valid_action = valid_action
         self.is_predict = False
+        self.lines_cleared = 0
+        # If lines_cleared, this will show the board state before the lines
+        # were cleared. Useful for model training.
+        self.intermediate_board: ndarray = None
 
     def __str__(self):
         return f"ActionFeedback(valid_action={self.valid_action}, is_predict={self.is_predict})"
@@ -34,6 +45,35 @@ class EnvStats:
         self.total_placements = 0
         self.total_games_completed = 0
         self.total_lines_cleared = 0
+
+
+E_STEP_COMPLETE = "step_complete"  # Steps include invalid moves
+E_MINO_SETTLED = "mino_settled"
+E_GAME_OVER = "game_over"
+E_GAME_START = "game_start"
+E_LINE_CLEAR = "line_clear"
+
+
+class CallbackHandler:
+    """
+    Allows external entities to register callbacks for various events.
+    """
+
+    def __init__(self):
+        self.callbacks = {}
+
+    def register(self, event: str, callback):
+        if event not in self.callbacks:
+            self.callbacks[event] = []
+
+        self.callbacks[event].append(callback)
+
+    def call(self, event: str, *args, **kwargs):
+        if event not in self.callbacks:
+            return
+
+        for cb in self.callbacks[event]:
+            cb(*args, **kwargs)
 
 
 class TetrisEnv(gym.Env):
@@ -56,6 +96,8 @@ class TetrisEnv(gym.Env):
         self.random_seed = None
         self.stats = EnvStats()
         self.record: TetrisGameRecord = None
+
+        self.events = CallbackHandler()
 
         # Indexes  0-19 - The visible playfield
         #         20-23 - Buffer for overflows
@@ -88,9 +130,78 @@ class TetrisEnv(gym.Env):
         self.current_mino = self._get_random_piece()
         self.record = TetrisGameRecord()
         self.step_history: list[MinoPlacement] = []
+
         return self._get_board_state()
 
-    def step(self, action: tuple[int, int]):
+    def is_valid_action(self, action: ModelAction) -> tuple[bool, dict]:
+        """
+        action: tuple[int, int]
+        """
+        col, rotation = action
+        lcol = col + 1
+
+        # ([0-9], [0-3])
+        if lcol < 1 or lcol > self.board_width:
+            return False, {"message": "Column out of bounds"}
+
+        # An O piece on col 1 would occupy cols 1-2
+        if lcol + self.current_mino.width - 1 > self.board_width:
+            return False, {"message": "Piece overflows the board"}
+
+        return True, {}
+
+    def commit_action(self, action: ModelAction) -> tuple[bool, dict]:
+        """
+        action: tuple[int, int]
+        """
+        col, rotation = action
+        done = False
+
+        info = ActionFeedback()
+        mino = MinoShape(self.current_mino.shape_id, rotation)
+
+        info.valid_action = True
+        lcoords = None
+
+        lcoords = self.board.find_logical_BL_coords(mino, col)
+        self.board.place_shape(mino, lcoords)
+
+        self.events.call(E_MINO_SETTLED)
+
+        # self.stats.total_placements += 1
+        # self.record.moves += 1
+        # self.record.boards.append(self.board.board.copy())
+        # self.record.pieces.append(mino.get_piece().to_dict())
+        # self.current_mino.rot = 0
+        # self.record.placements.append(lcoords)
+
+        # If any of the top four rows were used -- Game Over
+        if np.any(self.board.board[-4:]):
+            # Game Over
+            done = True
+            reward = -1
+
+            self.record.rewards.append(reward)
+            self.record.cumulative_reward += reward
+            self.reward_history.append(reward)
+
+            self.close_episode()
+
+            return done, info
+
+        # reward = self.calculate_reward()
+        done = False
+
+        # self.record.rewards.append(reward)
+        # self.record.cumulative_reward += reward
+        # self.reward_history.append(reward)
+
+        # If any lines are full
+        self.board.remove_tetris()
+
+        return done, info
+
+    def step(self, action: ModelAction):
         """
         action: zero-indexed tuple of (column, rotation)
         """
@@ -127,6 +238,8 @@ class TetrisEnv(gym.Env):
         lcoords = self.board.find_logical_BL_coords(mino, col)
         self.board.place_shape(mino, lcoords)
 
+        self.events.call(E_MINO_SETTLED)
+
         self.stats.total_placements += 1
         self.record.moves += 1
         self.record.boards.append(self.board.board.copy())
@@ -151,12 +264,24 @@ class TetrisEnv(gym.Env):
 
         # reward = self.board_height - lcoords[0]
 
-        reward = self._calculate_reward()
+        reward = self.calculate_reward()
         done = False
+
+        if reward < 1:
+            reward = -1
+
+        done = True
 
         self.record.rewards.append(reward)
         self.record.cumulative_reward += reward
         self.reward_history.append(reward)
+
+        # If any lines are full
+        line_clear = np.any([sum(x) == self.board_width for x in self.board.board])
+
+        if line_clear:
+            # TODO Send the board before and after the clears
+            self.events.call(E_LINE_CLEAR)
 
         # Huzzah!
         lines_gone = self.board.remove_tetris()
@@ -166,12 +291,10 @@ class TetrisEnv(gym.Env):
         self.stats.total_lines_cleared += lines_gone
         self.record.lines_cleared += lines_gone
 
-        reward += lines_gone * 100
-
         # Prep for next move
         self.current_mino = self._get_random_piece()
         next_board_state = self._get_board_state()
-        return next_board_state, reward, done, info
+        return next_board_state, reward, True, info
 
     def close_episode(self):
         """
@@ -206,7 +329,7 @@ class TetrisEnv(gym.Env):
             return False
         return True
 
-    def _calculate_reward(self):
+    def calculate_reward(self):
         tower_height = 0
 
         line_pack = []
@@ -225,56 +348,6 @@ class TetrisEnv(gym.Env):
 
         pct_board_full = sum(line_pack) / (self.board_width * tower_height)
         return max(clears, pct_board_full)
-
-    def _calculate_reward_bak(self):
-
-        # Evaluate line pack
-        # Packed lines produces a higher score
-        # Big narrow tower would produce a low score
-        active_lines = 0
-        board_tiles = 0
-        lines_cleared = 0
-        board = self.board.board
-
-        for row in self.board.board:
-            row_sum = sum(row)
-            board_tiles += row_sum
-            if row_sum == 0:
-                continue
-
-            active_lines += 1
-            if row_sum == self.board.width:
-                lines_cleared += 1
-
-        if active_lines == 0:
-            return 0
-
-        # Simulating an extra 10 packed tiles per line cleared
-        line_clear_bonus = 10
-
-        # Narrow towers get lower rewards. Starting with row 3, every row that
-        # has < 50% pack, gets a penalty of this many additional empty tiles when
-        # calculating the pack score.
-        sharp_tower_penalty = 3
-        sharp_tower_pack_min = 0.5
-        underpacked_lines = 0
-
-        line_pack_pct = [(sum(x) / self.board.width) for x in self.board.board]
-        high_tower_penalty = 0
-        for pct in line_pack_pct[3:active_lines]:
-            if pct < sharp_tower_pack_min:
-                underpacked_lines += 1
-
-        high_tower_penalty = underpacked_lines * sharp_tower_penalty
-
-        line_score = (board_tiles + (10 * lines_cleared)) / float(
-            self.board_width * active_lines + high_tower_penalty
-        )
-
-        line_pack_pct = [sum(x) / self.board.width for x in self.board.board]
-
-        reward = line_score  # That's all for now
-        return reward
 
     def _get_board_state(self) -> np.ndarray:
         """
@@ -318,3 +391,48 @@ class MinoBag(deque):
 
     def __str__(self):
         return f"MinoBag({[Tetrominos.shape_name(x) for x in self]})"
+
+
+class BasePlayer:
+    def __init__(self):
+        pass
+
+    def play(self, e: TetrisEnv) -> ModelAction:
+        pass
+
+    def on_episode_start(self):
+        pass
+
+    def on_episode_end(self):
+        """Includes reason for termination"""
+        pass
+
+
+# play.sess.shon.
+class PlaySession:
+    """
+    A simple connector between player and environment
+    """
+
+    def __init__(self, e: TetrisEnv, p: BasePlayer):
+        self.env = e
+        self.player: BasePlayer = p
+        self.events = CallbackHandler()
+
+    def play_game(self, episodes: int = 1):
+        self.env.reset()
+
+        while True:
+            action = self.player.play(self.env)
+
+            # Can this move be accepted by the environment?
+            valid, info = self.env.is_valid_action(action)
+
+            if not valid:
+                raise ValueError(f"Invalid action: {info}")
+
+            done, info = self.env.commit_action(action)
+            self.player.on_action_commit(self.env, action, done)
+
+            if done:
+                break

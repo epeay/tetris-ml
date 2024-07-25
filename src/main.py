@@ -3,7 +3,6 @@ import json
 import numpy as np
 import os
 import sys
-import yaml
 
 import matplotlib.pyplot as plt
 
@@ -15,8 +14,12 @@ import utils
 from cheating import *
 from viz import *
 import time
-from tetrisml.env import PlaySession
+from tetrisml.env import PlaySession, TetrisEnv
+from tetrisml import MinoShape, Tetrominos, GameHistory
 from player import CheatingPlayer, PlaybackPlayer
+from model import DQNAgent
+
+from cheating import find_possible_moves
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 import tensorflow as tf
@@ -29,65 +32,8 @@ Episode = One tetris game
 mino = Tetromino
 """
 
-
 config: TMLConfig = load_config()
 game_logs: list[GameHistory] = []
-
-
-def mcts(env: TetrisEnv, episodes: int = 10, game_logs: list[GameHistory] = None):
-
-    for _ in range(episodes):
-        env.reset()
-        history: GameHistory = GameHistory()
-        print(f"Starting game {history.id}")
-        history.seed = env.random_seed
-        history.bag = env.piece_bag
-
-        move = 0
-        while True:
-            move += 1
-            piece = env.current_mino
-            possibilities = []
-            best_reward = -np.inf
-            # TODO: Some minos don't need four rotations
-            for i in range(4):
-                possibilities += find_possible_moves(env, MinoShape(piece.shape_id, i))
-
-            highest_reward_choices = []
-
-            for p in possibilities:
-                if p.reward == best_reward:
-                    highest_reward_choices.append(p)
-                if p.reward > best_reward:
-                    best_reward = p.reward
-                    highest_reward_choices = [p]
-
-            best_choice: MinoPlacement = np.random.choice(highest_reward_choices)
-            env.step((best_choice.bl_coords[1] - 1, best_choice.shape.shape_rot))
-            history.placements.append(best_choice)
-            env.render()
-
-            if env.board.board[-4:].any():
-                env.close_episode()
-                history.record = env.record
-
-                print("Game Over")
-                print(f"GAME ID: {history.id}")
-                print(f"Final Reward: {env.record.cumulative_reward}")
-                print(f"Lines Cleared: {env.record.lines_cleared}")
-                print(f"Invalid Moves: {env.record.invalid_moves}")
-                print(f"Clears by Size: {env.record.cleared_by_size}")
-                print(f"Duration: {env.record.duration_ns / 1000000000}")
-                print(f"Moves: {env.record.moves}")
-                print(f"Game Seed: {env.random_seed}")
-
-                if env.record.cleared_by_size[4] > 0:
-                    print("Tetris!!!!!!!!!!")
-
-                # I'm about to
-                break
-
-        game_logs.append(history)
 
 
 def save_game_logs(game_logs: list[GameHistory], path: str = "game_logs.json"):
@@ -195,8 +141,8 @@ e = TetrisEnv.smoltris()
 # )
 # p = PlaybackPlayer.from_file(playback_path)
 
-p = CheatingPlayer()
-sesh = PlaySession(e, p)
+
+sesh = PlaySession(e, agent)
 
 # sesh.events.register(E_STEP_COMPLETE, lambda: print(".", end=""))
 
@@ -209,7 +155,7 @@ def on_mino_settled():
 
 
 sesh.env.events.register(E_MINO_SETTLED, on_mino_settled)
-sesh.play(10)
+sesh.play_game(1)
 
 
 # playback_path = os.path.join(config.workspace_dir, "game_logs_240718_215902_expert_smoltris.json")
