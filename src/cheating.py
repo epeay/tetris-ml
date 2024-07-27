@@ -1,5 +1,6 @@
 from tetrisml.env import TetrisEnv
 from tetrisml import *
+import tetrisml
 
 
 def find_possible_moves(env: TetrisEnv, s: MinoShape) -> list[MinoPlacement]:
@@ -38,7 +39,7 @@ def find_possible_moves(env: TetrisEnv, s: MinoShape) -> list[MinoPlacement]:
 
         piece: TetrominoPiece = s.get_piece()
         backup_rows = board.place_shape(s, lcoords)
-        reward = env.calculate_reward()
+        reward = tetrisml.calculate_reward(board.board)
 
         # Revert the board
         for r in range(len(backup_rows)):

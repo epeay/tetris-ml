@@ -22,27 +22,8 @@ class TetrisBoard:
         self.piece = None
 
     def remove_tetris(self):
-        to_delete = []
-        for r, row in enumerate(self.board):
-            if sum(row) == self.width:
-                to_delete.append(r)
-
-        if to_delete:
-
-            # TODO Handle this more efficiently
-            # I believe BOTH of these operations make copies of the source data
-            self.board = np.delete(self.board, to_delete, axis=0)
-
-            # Odd workaround because vscode is messing with the memory management
-            # of numpy by holding a reference to the board, which prevents the
-            # resize in place.
-            refcheck = True  # This is the default
-            if "ISDEBUG" in os.environ.keys():
-                refcheck = False
-
-            self.board.resize((self.height, self.width), refcheck=refcheck)
-
-        return len(to_delete)
+        lines_cleared = clear_full_lines(self.board)
+        return len(lines_cleared)
 
     def export_board(self):
         return self.board.copy()
@@ -188,50 +169,45 @@ class TetrisBoard:
         return self.find_logical_BL_coords(MinoShape(piece.shape, 0), col)
 
     @staticmethod
-    def render_state(
-        board,
-        highlight_shape: MinoShape = None,
-        highlight_bl_coords=None,
+    def render_last_action(
+        board: NDArray,
+        mino: MinoShape = None,
+        lcoords=None,
         color=True,
         title="",
+        return_matrix=False,
     ):
         board = board.copy()
         output = False
+        title_line = f"== {title} =="
 
-        if highlight_shape is not None and highlight_bl_coords is not None:
-            shape = highlight_shape.shape
-            p_height = len(shape)
-            lrow = highlight_bl_coords[0]
-            lcol = highlight_bl_coords[1]
+        print("=" * len(title_line))
+        print(title_line)
 
-            for r in range(p_height):
-                pattern_row = shape[len(shape) - 1 - r]
-                board_row = board[lrow - 1 + r]
+        if mino is not None:
+            pattern = np.array(mino.shape)
+            r, c = lcoords
 
-                for i, c in enumerate(pattern_row):
-                    # Iff c is 1, push it to the board
-                    if c == 1:
-                        board_row[lcol - 1 + i] = 2
-
-        if title is not None:
-            print(f"== {title} ==")
+            # logical coords to board coords
+            r -= 1
+            c -= 1
+            board[r : r + mino.height, c : c + mino.width] += np.array(
+                [x for x in reversed(pattern)]
+            )
 
         for i, row in enumerate(reversed(board)):
-            if sum(row) == 0 and not output:
-                continue
-            else:
-                output = True
-
             for cell in row:
                 if cell == 2:
-                    print(f"\033[36m{TetrisBoard.BLOCK}\033[0m", end=" ")
+                    # print(f"\033[36m{TetrisBoard.BLOCK}\033[0m", end=" ")
+                    print(f"X", end=" ")
                 elif cell == 1:
                     print(TetrisBoard.BLOCK, end=" ")
                 else:
                     print("_", end=" ")
             print()
 
-        print("=======================================")
+        if return_matrix:
+            return board
 
     def render(self):
         output = False
@@ -275,3 +251,44 @@ class TetrisBoard:
                     tops[col] = r + 1
 
         return tops
+
+
+def calculate_reward(board: NDArray) -> float:
+    tower_height = 0
+    h = board.shape[0]
+    w = board.shape[1]
+
+    line_pack = []
+    clears = 0
+
+    for r in board:
+        pack = sum(r)
+        if pack == 0:
+            break
+
+        if pack == w:
+            clears += 1
+
+        line_pack.append(sum(r))
+        tower_height += 1
+
+    pct_board_full = sum(line_pack) / (w * tower_height)
+    return max(clears, pct_board_full)
+
+
+def clear_full_lines(board: NDArray):
+    rows_to_clear = []
+    w = board.shape[1]
+
+    for r, row in enumerate(board):
+        # If all row values are > 0
+        if np.all(row, axis=0):
+            rows_to_clear.append(r + 1)
+        else:
+            board[r - len(rows_to_clear)] = board[r]
+
+    # zero the new top rows (if any)
+    for i in range(len(rows_to_clear)):
+        board[-(i + 1)] = np.zeros(w, dtype=int)
+
+    return rows_to_clear

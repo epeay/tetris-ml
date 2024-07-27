@@ -1,5 +1,7 @@
-from tetrisml.board import *
+from tetrisml.board import TetrisBoard, clear_full_lines
+from tetrisml.minos import MinoShape
 from tetrisml.tetrominos import *
+import numpy as np
 
 
 def test_from_ascii():
@@ -44,3 +46,42 @@ def test_find_logical_BL_coords():
     assert board.find_logical_BL_coords(side_i, 2) == (4, 3)
     assert board.find_logical_BL_coords(side_i, 3) == (1, 4)
     assert board.find_logical_BL_coords(side_i, 9) == (1, 10)
+
+
+def test_clear_full_lines():
+    ascii = [  # fmt: skip
+        "X X",
+        " X ",
+        "XXX",
+    ]
+
+    board = TetrisBoard.from_ascii(ascii)  # Produces a 3x3 board
+    sums = np.sum(board.board, axis=1)
+    assert np.array_equal(sums, [3, 1, 2])
+
+    clear_full_lines(board.board)
+    sums = np.sum(board.board, axis=1)
+    assert np.array_equal(sums, [1, 2, 0])
+
+
+def test_clear_full_lines_not_ones():
+    ascii = [  # fmt: skip
+        "X X",
+        " X ",
+        "XXX",
+    ]
+
+    fix = TetrisBoard.from_ascii(ascii)  # Produces a 3x3 board
+    fix = fix.board
+
+    # The cell value shouldn't matter, as long as it's non-zero
+    fix = fix * 2
+    fix[0] = np.array([1, 3, -1])
+
+    sums = np.sum(fix, axis=1)
+    assert np.array_equal(sums, [3, 2, 4])
+
+    clear_full_lines(fix)
+    sums = np.sum(fix, axis=1)
+    assert np.array_equal(sums, [2, 4, 0])
+    assert np.array_equal(fix[2], np.zeros(3))

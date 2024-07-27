@@ -17,6 +17,7 @@ import os
 
 from player import BasePlayer
 
+from tetrisml.base import ActionContext, BaseEnv
 import utils
 from tetrisml import TetrisEnv, TetrisGameRecord, EnvStats, ModelAction, MinoShape
 from tetrisml import Tetrominos
@@ -390,12 +391,12 @@ class DQNAgent(BasePlayer):
             action_index = self.predict(state)
             return action_index, True
 
-    def make_model_state(self, e: TetrisEnv) -> ModelState:
+    def make_model_state(self, e: BaseEnv) -> ModelState:
         state = ModelState(e.board.export_board())
         state.set_mino_one_hot(Tetrominos.get_num_tetrominos(), e.current_mino.shape_id)
         return state
 
-    def play(self, env: TetrisEnv) -> ModelAction:
+    def play(self, ctx: ActionContext, env: BaseEnv) -> tuple[ModelAction, dict]:
 
         self.pending_memory = ModelMemory()
 
@@ -403,39 +404,43 @@ class DQNAgent(BasePlayer):
         action, is_prediction = self.choose_action(curr_state, env.current_mino)
 
         self.pending_memory.state = curr_state
-
         self.pending_memory.action = action
 
-        return action
+        return action, self.pending_memory
 
-    def on_action_commit(self, env: TetrisEnv, action: ModelAction, done: bool):
+    def on_commit_action(self, env: TetrisEnv, ctx: ActionContext, memory: ModelMemory):
 
         # Do the thing. Apply the action, choose the next piece, etc
         # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        next_board_state, reward, done, info = env.step(action)
+        # next_board_state, reward, done, info = env.step(action)
         # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-        next_state = ModelState(next_board_state.squeeze(0))
+        next_state = self.make_model_state(env)
+
         next_state.set_mino_one_hot(
             Tetrominos.get_num_tetrominos(), env.current_mino.shape
         )
 
-        # if info.valid_action:
-        #     TetrisBoard.render_state(curr_state.board, planned_shape, (21, col+1), title="Planned move")
+        self.pending_memory.next_state = next_state
 
         # TODO Move this to a config var
-        if env.record.moves >= 100:
-            print("Hit move cap")
-            done = True
+        # if env.record.moves >= 100:
+        #     print("Hit move cap")
+        #     done = True
 
-        self.pending_memory.next_state = self.make_model_state(env)
-        self.pending_memory.done = done
-        self.reward = info.lines_cleared
+        self.pending_memory.done = ctx.ends_game
 
         memory = self.pending_memory.to_tuple()
 
         self.remember(*memory)
 
+    def debug_info(self):
+        print(f"Exp Rate: {self.exploration_rate}")
+        print(f"Replay Buffer: {len(self.replay_buffer)}")
+
+    def on_game_over(self, ctx: ActionContext, env: TetrisEnv):
+
+        # Should this be running every action? Every episode?
         loss = self.replay()
 
     def run(

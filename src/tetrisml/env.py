@@ -1,4 +1,6 @@
 import datetime
+from io import StringIO
+import sys
 import gymnasium as gym
 import numpy as np
 import time
@@ -9,6 +11,7 @@ from collections import deque
 from datetime import datetime
 from gymnasium import spaces
 
+from tetrisml.base import BaseBag, BaseEnv, ActionContext
 from tetrisml.tetrominos import Tetrominos, TetrominoPiece
 from tetrisml.minos import MinoPlacement, MinoShape
 from tetrisml.board import TetrisBoard
@@ -47,6 +50,7 @@ class EnvStats:
         self.total_lines_cleared = 0
 
 
+E_BEFORE_INPUT = "before_input"
 E_STEP_COMPLETE = "step_complete"  # Steps include invalid moves
 E_MINO_SETTLED = "mino_settled"
 E_GAME_OVER = "game_over"
@@ -78,7 +82,7 @@ class CallbackHandler:
 
 class TetrisEnv(gym.Env):
 
-    def __init__(self, piece_bag=None, board_height=20, board_width=10):
+    def __init__(self, piece_selection, board_height=20, board_width=10):
         """
         board_height: The DESIRED height of the board. The actual height will be
                         board_height + 4 to make clearance for overflows.
@@ -90,7 +94,8 @@ class TetrisEnv(gym.Env):
         self.pieces = Tetrominos()
         self.reward_history = deque(maxlen=10)
         self.record = TetrisGameRecord()
-        self.piece_bag = Tetrominos.std_bag if piece_bag is None else piece_bag
+        # TODO handle seed
+        self.piece_bag: BaseBag = MinoBag(piece_selection, None)
         self.step_history: list[MinoPlacement] = []
         self.random: random.Random = None
         self.random_seed = None
@@ -144,11 +149,21 @@ class TetrisEnv(gym.Env):
         if lcol < 1 or lcol > self.board_width:
             return False, {"message": "Column out of bounds"}
 
+        pending_mino = MinoShape(self.current_mino.shape_id, action[1])
+
         # An O piece on col 1 would occupy cols 1-2
-        if lcol + self.current_mino.width - 1 > self.board_width:
-            return False, {"message": "Piece overflows the board"}
+        if lcol + pending_mino.width - 1 > self.board_width:
+            return False, {
+                "message": f"Piece {self.current_mino} at {lcol} overflows the board"
+            }
 
         return True, {}
+
+    def on_before_input(self):
+        self.events.call(E_BEFORE_INPUT)
+
+    def debug_output(self, placed_mino, lcoords):
+        pass
 
     def commit_action(self, action: ModelAction) -> tuple[bool, dict]:
         """
@@ -164,9 +179,11 @@ class TetrisEnv(gym.Env):
         lcoords = None
 
         lcoords = self.board.find_logical_BL_coords(mino, col)
-        self.board.place_shape(mino, lcoords)
 
-        self.events.call(E_MINO_SETTLED)
+        self.render()
+
+        self.board.place_shape(mino, lcoords)
+        self.events.call(E_MINO_SETTLED, mino, lcoords)
 
         # self.stats.total_placements += 1
         # self.record.moves += 1
@@ -196,8 +213,12 @@ class TetrisEnv(gym.Env):
         # self.record.cumulative_reward += reward
         # self.reward_history.append(reward)
 
-        # If any lines are full
-        self.board.remove_tetris()
+        # If any lines are full, save the intermediate state
+        line_clear = np.any([sum(x) == self.board_width for x in self.board.board])
+        if line_clear:
+            info.intermediate_board = self.board.export_board()
+
+        info.lines_cleared = self.board.remove_tetris()
 
         return done, info
 
@@ -238,7 +259,7 @@ class TetrisEnv(gym.Env):
         lcoords = self.board.find_logical_BL_coords(mino, col)
         self.board.place_shape(mino, lcoords)
 
-        self.events.call(E_MINO_SETTLED)
+        self.events.call(E_MINO_SETTLED, mino, lcoords)
 
         self.stats.total_placements += 1
         self.record.moves += 1
@@ -293,6 +314,8 @@ class TetrisEnv(gym.Env):
 
         # Prep for next move
         self.current_mino = self._get_random_piece()
+
+        print(f"[step] Current Mino is {self.current_mino}")
         next_board_state = self._get_board_state()
         return next_board_state, reward, True, info
 
@@ -316,7 +339,7 @@ class TetrisEnv(gym.Env):
         self.board.render()
 
     def _get_random_piece(self):
-        return MinoShape(self.random.choice(self.piece_bag))
+        return MinoShape(self.piece_bag.pull())
 
     def _is_valid_action(self, piece, lcol):
         piece = self.current_mino
@@ -362,11 +385,11 @@ class TetrisEnv(gym.Env):
     @staticmethod
     def smoltris():
         bag = [Tetrominos.O, Tetrominos.DOT, Tetrominos.USCORE]
-        return TetrisEnv(piece_bag=bag, board_height=10, board_width=5)
+        return TetrisEnv(piece_selection=bag, board_height=10, board_width=5)
 
     @staticmethod
     def tetris():
-        return TetrisEnv()
+        return TetrisEnv(Tetrominos.std_bag)
 
 
 class MinoBag(deque):
@@ -374,12 +397,12 @@ class MinoBag(deque):
         super().__init__(maxlen=maxlen)
         self.tiles = tiles
         self.seed: int = None
-        self.r = random.Random(seed)
+        self.rng = random.Random(seed)
         self.populate()
 
     def populate(self):
         while len(self) < self.maxlen:
-            self.append(self.r.choice(self.tiles))
+            self.append(self.rng.choice(self.tiles))
 
     def popleft(self):
         ret = super().popleft()
@@ -407,6 +430,9 @@ class BasePlayer:
         """Includes reason for termination"""
         pass
 
+    def on_action_commit(self, e: TetrisEnv, action: ModelAction, done: bool):
+        pass
+
 
 # play.sess.shon.
 class PlaySession:
@@ -414,25 +440,68 @@ class PlaySession:
     A simple connector between player and environment
     """
 
-    def __init__(self, e: TetrisEnv, p: BasePlayer):
-        self.env = e
+    def __init__(self, e: BaseEnv, p: BasePlayer):
+        self.env: BaseEnv = e
         self.player: BasePlayer = p
         self.events = CallbackHandler()
 
+    def render(self):
+        buffer = StringIO()
+        sys.stdout = buffer
+        self.player.debug_output()
+        sys.stdout = sys.__stdout__
+        buffer = buffer.getvalue().split("\n")
+
+        return self.env.render(player_data=buffer)
+
     def play_game(self, episodes: int = 1):
-        self.env.reset()
+        self.env.board.do_instrumentation(self.env)
 
-        while True:
-            action = self.player.play(self.env)
+        for _ in range(episodes):
 
-            # Can this move be accepted by the environment?
-            valid, info = self.env.is_valid_action(action)
+            self.env.reset()
+            last_context = None
 
-            if not valid:
-                raise ValueError(f"Invalid action: {info}")
+            while True:
+                ctx = ActionContext()
+                player_data = None
 
-            done, info = self.env.commit_action(action)
-            self.player.on_action_commit(self.env, action, done)
+                self.env.on_before_input(ctx, last_context)
+                del last_context
 
-            if done:
-                break
+                while True:
+
+                    self.env.render(ctx)
+
+                    ctx.player_action, ctx.player_ctx = self.player.play(ctx, self.env)
+
+                    # Can this move be accepted by the environment?
+                    self.env.is_valid_action(ctx)
+
+                    if not ctx.valid_action:
+                        print("Invalid Action")
+                        continue
+
+                    break
+
+                # Do the thing.
+                self.env.commit_action(ctx)
+
+                self.player.on_commit_action(self.env, ctx, ctx.player_ctx)
+
+                self.env.render(ctx, title="Post-Action")
+
+                self.env.post_commit(ctx)
+
+                # After board clean-up, clear the placement data so that it isn't
+                # used to highlight board placements on rows that have been cleared.
+                # This feels like the wrong solution.
+                ctx.placement = None
+
+                self.env.render(ctx, title="Clean-up")
+                time.sleep(0.3)
+
+                last_context = ctx
+
+                if last_context.ends_game:
+                    break

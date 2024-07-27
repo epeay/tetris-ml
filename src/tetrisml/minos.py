@@ -18,7 +18,27 @@ class MinoShape:
         self._bottom_gaps: list[int] = None
 
     def __str__(self):
-        return f"MinoShape(shape={self.shape})"
+        return f"MinoShape(shape={Tetrominos.shape_name(self.shape_id)}, rot={self.shape_rot}, pattern=[{self.printable_pattern(oneline=True)}])"
+
+    def __repr__(self):
+        return self.__str__()
+
+    def printable_pattern(self, oneline=False):
+        ret = []
+        pattern = self.shape
+        for i, row in enumerate(pattern):
+            row_str = " ".join([str(c) for c in row])
+            ret.append(row_str)
+
+            if not oneline:
+                ret.append("\n")
+            else:
+                if i < len(pattern) - 1:
+                    ret.append(
+                        " / ",
+                    )
+        ret = "".join(ret).replace("1", TetrominoPiece.BLOCK).replace("0", "_")
+        return "".join(ret)
 
     def to_jsonable(self):
         return {

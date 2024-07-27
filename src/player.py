@@ -63,7 +63,7 @@ class RandomPlayer(BasePlayer):
         # but 10 would go beyond the board.
         max_col = e.board.width - m.width + 1
         col = self.rng.randint(1, max_col)  # Range [1, max_col]
-        return ModelAction(col - 1, rot)
+        return ModelAction((col - 1, rot))
 
 
 class PlaybackPlayer(BasePlayer):

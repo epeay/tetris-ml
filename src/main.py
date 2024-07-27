@@ -19,8 +19,6 @@ from tetrisml import MinoShape, Tetrominos, GameHistory
 from player import CheatingPlayer, PlaybackPlayer
 from model import DQNAgent
 
-from cheating import find_possible_moves
-
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 import tensorflow as tf
 
@@ -147,14 +145,6 @@ sesh = PlaySession(e, agent)
 # sesh.events.register(E_STEP_COMPLETE, lambda: print(".", end=""))
 
 
-def on_mino_settled():
-    print("")
-    e.render()
-    time.sleep(0.3)
-    print("")
-
-
-sesh.env.events.register(E_MINO_SETTLED, on_mino_settled)
 sesh.play_game(1)
 
 
