@@ -1,10 +1,48 @@
 import os
-import yaml
+import yaml  # type: ignore
 import utils
 
 # ../
 WORKSPACE_ROOT = os.path.dirname(os.path.realpath(__file__))
 WORKSPACE_ROOT = os.path.abspath(os.path.join(WORKSPACE_ROOT, ".."))
+
+
+# fmt: off
+hp = {
+    "epochs": 1000,
+    "model": {
+        "arch": "cnn1",
+        "input_channels": 1,
+        "action_dim": 10,
+        "linear_data_dim": 9,
+    },
+    "agent": {
+        "exploration_rate": 0.1,
+        "exploration_decay": 0.99,
+        "learning_rate": 0.01,
+        "batch_size": 64,
+        "replay_memory_size": 1000,
+        "target_update_freq": 100,
+    },
+    "board": {
+        "height": 10,
+        "width": 5,
+    },
+    "game": {
+        "type": "dig",
+        "seed": None,
+        "args": {
+            "episode_length": 1,
+        }
+    },
+    "env": {
+        "project_name": "tetris-ml",
+        "git_hash_short": None,
+        "git_pristine": False,
+        "unix_ts": None,
+    },
+}
+# fmt: on
 
 
 class TMLConfig(dict):

@@ -273,7 +273,7 @@ def calculate_reward(board: NDArray) -> float:
         tower_height += 1
 
     pct_board_full = sum(line_pack) / (w * tower_height)
-    return max(clears, pct_board_full)
+    return max(clears, 0)
 
 
 def clear_full_lines(board: NDArray):

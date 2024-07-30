@@ -10,8 +10,9 @@ import pytest
 from collections import deque
 from datetime import datetime
 from gymnasium import spaces
+import wandb
 
-from tetrisml.base import BaseBag, BaseEnv, ActionContext
+from tetrisml.base import BaseBag, BaseEnv, ActionContext, BasePlayer, ModelAction
 from tetrisml.tetrominos import Tetrominos, TetrominoPiece
 from tetrisml.minos import MinoPlacement, MinoShape
 from tetrisml.board import TetrisBoard
@@ -21,8 +22,6 @@ import numpy as np
 from numpy import ndarray
 
 from typing import NewType
-
-ModelAction = NewType("ModelAction", tuple[int, int])
 
 
 class ActionFeedback:
@@ -416,24 +415,6 @@ class MinoBag(deque):
         return f"MinoBag({[Tetrominos.shape_name(x) for x in self]})"
 
 
-class BasePlayer:
-    def __init__(self):
-        pass
-
-    def play(self, e: TetrisEnv) -> ModelAction:
-        pass
-
-    def on_episode_start(self):
-        pass
-
-    def on_episode_end(self):
-        """Includes reason for termination"""
-        pass
-
-    def on_action_commit(self, e: TetrisEnv, action: ModelAction, done: bool):
-        pass
-
-
 # play.sess.shon.
 class PlaySession:
     """
@@ -445,22 +426,73 @@ class PlaySession:
         self.player: BasePlayer = p
         self.events = CallbackHandler()
 
+        self.episode_num: int = 0
+        self.committed_action_num: int = 0
+
     def render(self):
+        """
+        Produces a two column output. The left column is the board state. The
+        right column is a debug output from the player and environment.
+
+        Example:
+        0 _ _ _ _ _  | Player Info:
+        9 _ _ _ _ _  |   exploration_rate: 1.0
+        8 _ _ _ _ _  |   replay_buffer_size: 120
+        7 _ _ _ _ _  |   replayed steps: 0
+        6 ▆ _ _ _ _  | Env Info:
+        5 ▆ _ _ _ _  |   current_mino: I
+        4 ▆ _ _ _ _  |
+        3 ▆ _ _ _ _  |
+        2 ▆ ▆ ▆ _ ▆  |
+        1 ▆ ▆ ▆ _ ▆  |
+                     |
+        """
+        player = self.player.get_debug_dict()
+        env = self.env.get_debug_dict()
+
         buffer = StringIO()
         sys.stdout = buffer
-        self.player.debug_output()
+        self.env.board.render()
         sys.stdout = sys.__stdout__
-        buffer = buffer.getvalue().split("\n")
+        lhs = buffer.getvalue().split("\n")
+        max_width = max([len(x) for x in lhs])
 
-        return self.env.render(player_data=buffer)
+        header = f"Ep {self.episode_num} | Ac {self.committed_action_num}"
 
-    def play_game(self, episodes: int = 1):
+        rhs = []
+        rhs.append(header)
+        rhs.append("Player Info:")
+        for k, v in player.items():
+            rhs.append(f"  {k}: {v}")
+
+        rhs.append("Env Info:")
+        for k, v in env.items():
+            rhs.append(f"  {k}: {v}")
+
+        lhs.append("")
+        rhs.append("")
+
+        if len(rhs) < len(lhs):
+            rhs.extend([""] * (len(lhs) - len(rhs)))
+
+        if len(lhs) < len(rhs):
+            lhs.extend([""] * (len(rhs) - len(lhs)))
+
+        for l, r in zip(lhs, rhs):
+            print(f"{l:<{max_width}} | {r}")
+
+    def play_game(self, episodes: int = 1, render: bool = True):
         self.env.board.do_instrumentation(self.env)
 
-        for _ in range(episodes):
+        for e in range(episodes):
+
+            self.episode_num += 1
+            self.committed_action_num = 0
 
             self.env.reset()
             last_context = None
+
+            self.player.on_episode_start(self.env)
 
             while True:
                 ctx = ActionContext()
@@ -471,25 +503,41 @@ class PlaySession:
 
                 while True:
 
-                    self.env.render(ctx)
+                    # self.env.render(ctx)
 
                     ctx.player_action, ctx.player_ctx = self.player.play(ctx, self.env)
 
                     # Can this move be accepted by the environment?
-                    self.env.is_valid_action(ctx)
+                    ctx.valid_action, info = self.env.is_valid_action(ctx)
 
                     if not ctx.valid_action:
-                        print("Invalid Action")
+                        message = info["message"]
+                        print(f"Invalid Action: {message}")
                         continue
 
                     break
 
                 # Do the thing.
                 self.env.commit_action(ctx)
+                self.committed_action_num += 1
 
                 self.player.on_commit_action(self.env, ctx, ctx.player_ctx)
 
-                self.env.render(ctx, title="Post-Action")
+                wandb.log(
+                    {
+                        "episode": e + 1,
+                        "action": self.committed_action_num,
+                        "reward": self.env.calculate_reward(),
+                        "is_prediction": self.player.last_action_info["is_prediction"],
+                        "action_stats": self.player.action_stats,
+                        "agent": self.player.get_wandb_dict(),
+                    }
+                )
+
+                if render:
+                    self.render()
+                else:
+                    print(".", end="")
 
                 self.env.post_commit(ctx)
 
@@ -498,10 +546,13 @@ class PlaySession:
                 # This feels like the wrong solution.
                 ctx.placement = None
 
-                self.env.render(ctx, title="Clean-up")
-                time.sleep(0.3)
+                # self.env.render(ctx, title="Clean-up")
+                # time.sleep(0.3)
 
                 last_context = ctx
 
                 if last_context.ends_game:
                     break
+
+            # Game Over
+            self.player.on_episode_end(self.env)

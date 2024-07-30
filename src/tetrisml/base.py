@@ -1,7 +1,11 @@
 from collections import deque
+from typing import NewType
 
 from numpy import ndarray
+
 from .minos import MinoShape
+
+ModelAction = NewType("ModelAction", tuple[int, int])
 
 
 class ContextPlacement:
@@ -83,3 +87,26 @@ class BaseEnv:
 
     def calculate_reward(self) -> float:
         raise NotImplementedError("calculate_reward() must be implemented by subclass")
+
+    def get_debug_dict(self) -> dict:
+        raise NotImplementedError("get_debug_dict() must be implemented by subclass")
+
+
+class BasePlayer:
+    def __init__(self):
+        pass
+
+    def play(self, e: BaseEnv) -> ModelAction:
+        pass
+
+    def on_episode_start(self):
+        pass
+
+    def on_episode_end(self, e: BaseEnv):
+        pass
+
+    def on_action_commit(self, e: BaseEnv, action: ModelAction, done: bool):
+        pass
+
+    def get_debug_dict(self):
+        return {}

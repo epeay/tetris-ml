@@ -168,6 +168,30 @@ class ModelMemory:
         return (self.state, self.action, self.reward, self.next_state, self.done)
 
 
+class ModelParams(dict):
+    def __init__(self):
+        self.input_channels: int = None
+        self.board_height: int = None
+        self.board_width: int = None
+        self.action_dim: int = None
+        self.linear_data_dim: int = 0
+        self.learning_rate: float = 0.001
+        self.discount_factor: float = 0.99
+        self.exploration_rate: float = 1.0
+        self.exploration_decay: float = 0.99
+        self.min_exploration_rate: float = 0.01
+        self.replay_buffer_size: int = 10000
+        self.batch_size: int = 64
+        self.log_dir: str = None
+        self.load_path: str = None
+        self.model_id: str = None
+
+    def __setattr__(self, key, value):
+        """Class properties become dict key/value pairs"""
+        self[key] = value
+        super().__setattr__(key, value)
+
+
 class DQNAgent(BasePlayer):
 
     MODE_UNSET = 0
@@ -210,11 +234,23 @@ class DQNAgent(BasePlayer):
         self.board_width = board_width
 
         self.pending_memory = ModelMemory()
+        self.replays_counter = 0
+        self.last_replay_episode = 0
+        self.last_loss = 0
+
+        self.action_stats = {}
+        self.reset_action_stats()
+
+        self.last_action_info = {}
+        self.train = True
+
+        if model_id is None:
+            model_id = utils.word_id()
 
         self.model = TetrisCNN(
             model_id,
             input_channels,
-            board_height + 4,
+            board_height,
             board_width,
             action_dim,
             linear_data_dim,
@@ -222,7 +258,7 @@ class DQNAgent(BasePlayer):
         self.target_model = TetrisCNN(
             model_id,
             input_channels,
-            board_height + 4,
+            board_height,
             board_width,
             action_dim,
             linear_data_dim,
@@ -236,6 +272,30 @@ class DQNAgent(BasePlayer):
         self.writer = SummaryWriter(log_dir) if log_dir is not None else None
 
         self.agent_episode_count = 0
+
+    def reset_action_stats(self):
+        self.action_stats = {
+            "predict": {
+                "correct": 0,
+                "incorrect": 0,
+                "total": 0,
+            },
+            "guess": {
+                "correct": 0,
+                "incorrect": 0,
+                "total": 0,
+            },
+        }
+
+    def eval(self):
+        """
+        Locks the agent and underlying model from replaying/training. Also all
+        exploration is disabled.
+        """
+        self.train = False
+        self.exploration_rate = 0
+        self.model.eval()
+        self.target_model.eval()
 
     def save_model(self, abspath, overwrite=False):
         """
@@ -398,10 +458,18 @@ class DQNAgent(BasePlayer):
 
     def play(self, ctx: ActionContext, env: BaseEnv) -> tuple[ModelAction, dict]:
 
+        self.last_action_info = {}
+        lai = self.last_action_info
+
         self.pending_memory = ModelMemory()
 
         curr_state = self.make_model_state(env)
         action, is_prediction = self.choose_action(curr_state, env.current_mino)
+
+        lai["shape_name"] = Tetrominos.shape_name(env.get_current_mino().shape_id)
+        lai["column"] = action[0]
+        lai["rotation"] = action[1]
+        lai["is_prediction"] = is_prediction
 
         self.pending_memory.state = curr_state
         self.pending_memory.action = action
@@ -422,6 +490,15 @@ class DQNAgent(BasePlayer):
         )
 
         self.pending_memory.next_state = next_state
+        reward = env.calculate_reward()
+        self.pending_memory.reward = reward
+
+        # Update Action Stats
+        correct = reward == 2
+        modality = "predict" if self.last_action_info["is_prediction"] else "guess"
+        outcome_str = "correct" if correct else "incorrect"
+        self.action_stats[modality][outcome_str] += 1
+        self.action_stats[modality]["total"] += 1
 
         # TODO Move this to a config var
         # if env.record.moves >= 100:
@@ -434,14 +511,75 @@ class DQNAgent(BasePlayer):
 
         self.remember(*memory)
 
-    def debug_info(self):
-        print(f"Exp Rate: {self.exploration_rate}")
-        print(f"Replay Buffer: {len(self.replay_buffer)}")
+    def get_wandb_dict(self):
+        ret = {
+            "episode": self.agent_episode_count,
+            "exploration_rate": self.exploration_rate,
+            "replay_buffer_size": len(self.replay_buffer),
+            "replayed_steps_count": self.replays_counter,
+            "predict": {
+                "1": self.action_stats["predict"]["correct"],
+                "0": self.action_stats["predict"]["incorrect"],
+                "total": self.action_stats["predict"]["total"],
+            },
+        }
 
-    def on_game_over(self, ctx: ActionContext, env: TetrisEnv):
+        if sum(self.action_stats["guess"].values()) > 0:
+            ret["guess"] = {
+                "1": self.action_stats["guess"]["correct"],
+                "0": self.action_stats["guess"]["incorrect"],
+                "total": self.action_stats["guess"]["total"],
+            }
+
+        return ret
+
+    def get_debug_dict(self):
+
+        predict_str = (
+            "predicted" if self.last_action_info["is_prediction"] else "guessed"
+        )
+
+        guess_xofy = (
+            self.action_stats["guess"]["correct"],
+            self.action_stats["guess"]["correct"]
+            + self.action_stats["guess"]["incorrect"],
+        )
+
+        predict_xofy = (
+            self.action_stats["predict"]["correct"],
+            self.action_stats["predict"]["correct"]
+            + self.action_stats["predict"]["incorrect"],
+        )
+
+        guess_stats_str = f"{guess_xofy[0]} of {guess_xofy[1]}"
+        if guess_xofy[1] > 0:
+            guess_stats_str += f" ({int(guess_xofy[0]/guess_xofy[1]*100)}%)"
+
+        predict_stats_str = f"{predict_xofy[0]} of {predict_xofy[1]}"
+        if predict_xofy[1] > 0:
+            predict_stats_str += f" ({int(predict_xofy[0]/predict_xofy[1]*100)}%)"
+
+        return {
+            "exploration_rate": int(self.exploration_rate * 100) / 100,
+            "replay_buffer_size": len(self.replay_buffer),
+            "replayed steps": self.replays_counter,
+            "move was": predict_str,
+            "guess success  ": guess_stats_str,
+            "predict success": predict_stats_str,
+        }
+
+    def on_episode_start(self, env: BaseEnv):
+        self.agent_episode_count += 1
+
+    def on_episode_end(self, env: TetrisEnv):
+        loss = None
 
         # Should this be running every action? Every episode?
-        loss = self.replay()
+        if self.train:
+            loss = self.replay()
+
+        if self.train and loss is not None:
+            self.decay_exploration_rate()
 
     def run(
         self,
@@ -554,6 +692,8 @@ class DQNAgent(BasePlayer):
         loss.backward()
         self.optimizer.step()
 
+        self.replays_counter += self.batch_size
+
         return loss
 
     def decay_exploration_rate(self):
@@ -572,11 +712,3 @@ class ModelPlayer(BasePlayer):
     def make_model_state(self, e: TetrisEnv) -> ModelState:
         state = ModelState(e.board)
         state.set_mino_one_hot(Tetrominos.get_num_tetrominos(), e.current_mino.shape_id)
-
-
-class AgentPlayer(BasePlayer):
-    def __init__(self, agent: DQNAgent):
-        self.agent = agent
-
-    def play(self, e: TetrisEnv):
-        pass

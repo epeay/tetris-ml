@@ -3,6 +3,7 @@ import random
 from tetrisml import MinoShape, TetrisEnv, BasePlayer
 from tetrisml.logging import GameHistory
 from tetrisml.env import ModelAction
+from tetrisml.minos import MinoPlacement
 from cheating import find_possible_moves
 import numpy as np
 
@@ -33,7 +34,7 @@ class CheatingPlayer(BasePlayer):
                 np.array(find_possible_moves(e, MinoShape(mino.shape_id, i)))
             )
 
-        possibilities = np.concatenate(possibilities)
+        possibilities: list[MinoPlacement] = np.concatenate(possibilities)
         highest_reward_choices = []
 
         for p in possibilities:

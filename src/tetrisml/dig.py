@@ -1,4 +1,3 @@
-from ast import Str
 from collections import deque
 from io import StringIO
 import sys
@@ -14,6 +13,7 @@ from .env import MinoBag
 from .base import BaseBag, BaseEnv, ContextPlacement
 import random
 import numpy as np
+
 
 from tetrisml import board
 
@@ -36,12 +36,13 @@ class DigBag(BaseBag):
 
 
 class DigEnv(BaseEnv):
-    def __init__(self):
+    def __init__(self, seed=None):
         self.board_height = 10
         self.board_width = 5
         self.board = DigBoard(
             np.zeros((self.board_height, self.board_width), dtype=int),
             self.board_height,
+            seed=seed,
         )
         self.bag = DigBag()
 
@@ -61,14 +62,12 @@ class DigEnv(BaseEnv):
 
         buffer = StringIO()
         sys.stdout = buffer
-
         TetrisBoard.render_last_action(
             self.board.board,
             m,
             c,
             title=title,
         )
-
         sys.stdout = sys.__stdout__
         lhs = buffer.getvalue().split("\n")
         max_width = max([len(x) for x in lhs])
@@ -89,25 +88,12 @@ class DigEnv(BaseEnv):
         for l, r in zip(lhs, rhs):
             print(f"{l:<{max_width}} | {r}")
 
-    def debug_output(self):
-        lhs = StringIO()
-        rhs = StringIO()
-
-        sys.stdout = lhs
-        TetrisBoard.render_last_action(
-            self.board.board, placed_mino, lcoords, title="Debug Output"
-        )
-        sys.stdout = sys.__stdout__
-        lhs = lhs.getvalue().split("\n")
-        max_lhs = max([len(x) for x in lhs])
-
-        sys.stdout = rhs
-        print(f"Current Mino: {self.current_mino}")
-        sys.stdout = sys.__stdout__
-        rhs = rhs.getvalue().split("\n")
-
-        for l, r in zip(lhs, rhs):
-            print(f"{l:<{max_lhs}} | {r}")
+    def get_debug_dict(self) -> dict:
+        return {
+            "current_mino": Tetrominos.shape_name(self.get_current_mino().shape_id),
+            "reward": self.calculate_reward(),
+            "seed": self.board.seed,
+        }
 
     def on_before_input(self, ctx: ActionContext, p_ctx: ActionContext):
         self.board.setup()
@@ -132,12 +118,11 @@ class DigEnv(BaseEnv):
 
         # An O piece on col 1 would occupy cols 1-2
         if lcol + pending_mino.width - 1 > self.board_width:
-            ctx.valid_action = False
             return False, {
                 "message": f"Piece {self.current_mino} at {lcol} overflows the board"
             }
 
-        ctx.valid_action = True
+        return True, {}
 
     def commit_action(self, ctx: ActionContext):
         col, rotation = ctx.player_action
@@ -155,20 +140,15 @@ class DigEnv(BaseEnv):
 
         # If any of the top four rows were used -- Game Over
         # TODO Evaluate for a board that doesn't have the extra rows
-        if np.any(self.board.board[-4:]):
-            # Game Over
-            done = True
-            reward = -1
+        # if np.any(self.board.board[-4:]):
+        #     done = True
+        #     reward = -1
 
-            # self.record.rewards.append(reward)
-            # self.record.cumulative_reward += reward
-            # self.reward_history.append(reward)
+        #     print("CLOSING EPISODE")
 
-            print("CLOSING EPISODE")
+        #     self.close_episode()
 
-            self.close_episode()
-
-            return done
+        #     return done
 
         # reward = self.calculate_reward()
         done = False
@@ -185,16 +165,19 @@ class DigEnv(BaseEnv):
 
         ctx.lines_cleared = self.board.remove_tetris()
 
+        # For now, the game only has one board
+        ctx.ends_game = True
+
         # TODO This will need refining
-        if ctx.lines_cleared != 2:
-            ctx.ends_game = True
+        # if ctx.lines_cleared != 2:
+        #     ctx.ends_game = True
 
     def calculate_reward(self) -> float:
         return board.calculate_reward(self.board.board)
 
 
 class DigBoard(TetrisBoard):
-    def __init__(self, matrix: np.ndarray, height: int, seed: int = None):
+    def __init__(self, matrix: np.ndarray, height: int, seed=None):
         super().__init__(matrix, height)
         self.seed = seed
         self.rng = random.Random(seed)
@@ -233,10 +216,11 @@ class DigBoard(TetrisBoard):
     def step(self, action):
         pass
 
-    def reset(self, seed: int = None):
+    def reset(self, seed=None):
         super().reset()
-        self.seed = seed
-        self.rng.seed(seed)
+        if seed is not None:
+            self.seed = seed
+            self.rng.seed(seed)
         self.setup()
 
     def setup(self):
@@ -265,10 +249,10 @@ class DigBoard(TetrisBoard):
         """
         allowed_configurations = [
             (Tetrominos.O, 0),
-            (Tetrominos.I, 1),
-            (Tetrominos.S, 1),
-            (Tetrominos.Z, 1),
-            (Tetrominos.J, 1),
+            # (Tetrominos.I, 1),
+            # (Tetrominos.S, 1),
+            # (Tetrominos.Z, 1),
+            # (Tetrominos.J, 1),
             # (Tetrominos.L, 2),
             # (Tetrominos.T, 1),
             # (Tetrominos.T, 3),
@@ -280,7 +264,7 @@ class DigBoard(TetrisBoard):
         # Place the mino on the board, in a random column
         mino = MinoShape(chosen_config[0], chosen_config[1])
         col_range = self.width - mino.width + 1
-        col = random.randint(1, col_range)
+        col = self.rng.randint(1, col_range)
         stage_board = TetrisBoard(np.zeros((4, self.width), dtype=int), 4)
         stage_board.place_shape(mino, (1, col))
 

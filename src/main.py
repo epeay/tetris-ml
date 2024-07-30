@@ -20,7 +20,7 @@ from player import CheatingPlayer, PlaybackPlayer
 from model import DQNAgent
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
-import tensorflow as tf
+import tensorflow as tf  # type: ignore
 
 # Verify TensorFlow is using CPU
 print("Num GPUs Available: ", len(tf.config.experimental.list_physical_devices("GPU")))
@@ -43,14 +43,6 @@ def save_game_logs(game_logs: list[GameHistory], path: str = "game_logs.json"):
     print(f"Saving game logs to {path}")
     with open(path, "w") as outfile:
         json.dump(ret, outfile, indent=4)
-
-
-def run_mcts(env: TetrisEnv, episodes: int = 10):
-    mcts(env, episodes=episodes, game_logs=game_logs)
-    if len(game_logs) > 0:
-        file_ts = game_logs[0].timestamp.strftime("%y%m%d_%H%M%S")
-        save_game_logs(game_logs, f"game_logs_{file_ts}.json")
-    sys.exit()
 
 
 e = TetrisEnv.smoltris()
@@ -124,12 +116,6 @@ def keep_training(agent):
         agent.exploration_rate = 0.8
 
     return True
-
-
-def run_from_playback(path: str):
-    num_games = len(playback)
-    # episode count doesn't matter when playback is specified
-    agent.run(e, 10, playback_list=[playback[0]])
 
 
 e = TetrisEnv.smoltris()

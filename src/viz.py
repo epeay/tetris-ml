@@ -7,7 +7,9 @@ from numpy import ndarray as NDArray
 
 
 # Function to visualize feature maps
-def visualize_board_and_feature_maps(board, feature_maps, layer_name, img_name):
+def visualize_board_and_feature_maps(
+    board: NDArray, feature_maps, layer_name, img_name
+):
     plt.ioff()  # Turn off interactive mode
 
     num_maps = feature_maps.shape[1]

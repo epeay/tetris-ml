@@ -1,9 +1,10 @@
 import json
 import os
+import numpy
 import pandas as pd
 import IPython
 import matplotlib.pyplot as plt
-import tensorflow
+import tensorflow  # type: ignore
 
 plt.ion()
 
@@ -77,12 +78,12 @@ class GameRuns:
         plt.show(block=True)
 
     def visualize_feature_maps(ax, model, layer_name, input_image):
-        from tensorflow.keras import Model
+        from tensorflow.keras import Model  # type: ignore
 
         layer_model = Model(
             inputs=model.input, outputs=model.get_layer(layer_name).output
         )
-        feature_maps = layer_model.predict(np.expand_dims(input_image, axis=0))
+        feature_maps = layer_model.predict(numpy.expand_dims(input_image, axis=0))
         num_feature_maps = feature_maps.shape[-1]
         for i in range(num_feature_maps):
             if i < len(ax):

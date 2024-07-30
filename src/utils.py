@@ -47,7 +47,7 @@ def word_id():
     """
     word-based id
     """
-    return f"{random.choice(adjectives)}{random.choice(common_nouns)}"
+    return f"{random.choice(adjectives)}-{random.choice(common_nouns)}"
 
 
 def ipython():
