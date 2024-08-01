@@ -139,9 +139,7 @@ class DigEnv(BaseEnv):
 
         correct = self.calculate_reward() == 2.0
 
-        # self.record.rewards.append(reward)
-        # self.record.cumulative_reward += reward
-        # self.reward_history.append(reward)
+        ctx.ends_game = True
 
     def post_commit(self, ctx: ActionContext):
         # If any lines are full, save the intermediate state
