@@ -136,22 +136,8 @@ class DigEnv(BaseEnv):
         # self.render()
 
         self.board.place_shape(mino, lcoords)
-        # self.events.call(E_MINO_SETTLED, mino, lcoords)
 
-        # If any of the top four rows were used -- Game Over
-        # TODO Evaluate for a board that doesn't have the extra rows
-        # if np.any(self.board.board[-4:]):
-        #     done = True
-        #     reward = -1
-
-        #     print("CLOSING EPISODE")
-
-        #     self.close_episode()
-
-        #     return done
-
-        # reward = self.calculate_reward()
-        done = False
+        correct = self.calculate_reward() == 2.0
 
         # self.record.rewards.append(reward)
         # self.record.cumulative_reward += reward
