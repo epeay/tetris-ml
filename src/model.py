@@ -675,13 +675,35 @@ class DQNAgent(BasePlayer):
         rewards = torch.FloatTensor(rewards)
         dones = torch.FloatTensor(dones)
 
-        boards = boards.unsqueeze(1)  # Add channel dimension
-        n_boards = n_boards.unsqueeze(1)
+        if len(boards.shape) == 3:
+            boards = boards.unsqueeze(1)  # Add channel dimension
+            n_boards = n_boards.unsqueeze(1)
 
-        current_q_values = (
-            self.model(boards, lds).gather(1, actions.unsqueeze(1)).unsqueeze(1)
-        )
-        max_next_q_values = self.target_model(n_boards, n_lds).max(1)[0]
+        # Get the q-values for all possible actions for all boards in the batch.
+        # In:
+        #   (batch_size, channels, height, width)
+        #   (batch_size, linear_data_dim)
+        # Out:
+        #   (batch_size, action_dim)   action_dim = width * rotations
+        #                              40 for a Nx10 board
+        current_q_values = self.model(boards, lds)
+
+        # Get the q-value of the chosen action for each board in the batch
+        # Requires the actions to be of shape (batch_size, 1), in that there
+        # are 64 scalar values as input, one per row.
+        # e.g.: [[a1], [a2], [a3], ...]
+        current_q_values = current_q_values.gather(1, actions.unsqueeze(1))
+
+        # Drop from (batch_size, 1) to (batch_size,)
+        current_q_values = current_q_values.squeeze(1)
+
+        # Looking ahead to the next state:
+        #   Calculate the q-values for each possible action. Shape (64, num_actions)
+        #   Return the max q-value for each board in the batch. Shape (64,)
+        #   [0] produces a tensor of shape (64, 1)
+        max_next_q_values = self.target_model(n_boards, n_lds)
+        max_next_q_values = max_next_q_values.max(1)[0]
+
         expected_q_values = rewards + (
             self.discount_factor * max_next_q_values * (1 - dones)
         )
