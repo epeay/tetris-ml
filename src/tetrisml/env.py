@@ -49,37 +49,10 @@ class EnvStats:
         self.total_lines_cleared = 0
 
 
-E_BEFORE_INPUT = "before_input"
-E_STEP_COMPLETE = "step_complete"  # Steps include invalid moves
-E_MINO_SETTLED = "mino_settled"
-E_GAME_OVER = "game_over"
-E_GAME_START = "game_start"
-E_LINE_CLEAR = "line_clear"
-
-
-class CallbackHandler:
-    """
-    Allows external entities to register callbacks for various events.
-    """
-
-    def __init__(self):
-        self.callbacks = {}
-
-    def register(self, event: str, callback):
-        if event not in self.callbacks:
-            self.callbacks[event] = []
-
-        self.callbacks[event].append(callback)
-
-    def call(self, event: str, *args, **kwargs):
-        if event not in self.callbacks:
-            return
-
-        for cb in self.callbacks[event]:
-            cb(*args, **kwargs)
-
-
 class TetrisEnv(gym.Env):
+
+    E_BEFORE_INPUT = "before_input"
+    E_ACTION_COMMITED = "action_committed"
 
     def __init__(self, piece_selection, board_height=20, board_width=10):
         """
@@ -501,36 +474,35 @@ class PlaySession:
                 self.env.on_before_input(ctx, last_context)
                 del last_context
 
-                while True:
-
-                    # self.env.render(ctx)
-
-                    ctx.player_action, ctx.player_ctx = self.player.play(ctx, self.env)
-
-                    # Can this move be accepted by the environment?
+                while ctx.valid_action is not True:
+                    ctx.player_action = self.player.play(self.env)
                     ctx.valid_action, info = self.env.is_valid_action(ctx)
+                    # ctx.ends_game = self.env.is_episode_over(ctx)
 
                     if not ctx.valid_action:
-                        message = info["message"]
-                        print(f"Invalid Action: {message}")
-                        continue
+                        # self.env.recover_from_invalid_action(ctx, info)
+                        self.player.on_invalid_input(ctx)
 
-                    break
+                ###
+                # Ready to commit user input
+                ###
 
-                # Do the thing.
                 self.env.commit_action(ctx)
                 self.committed_action_num += 1
 
-                self.player.on_commit_action(self.env, ctx, ctx.player_ctx)
+                self.player.on_action_commit(self.env, ctx, ctx.player_ctx)
+                self.env.on_action_commit(ctx)
+
+                p_dict = self.player.get_wandb_dict()
+                e_dict = self.env.get_wandb_dict()
 
                 wandb.log(
                     {
                         "episode": e + 1,
                         "action": self.committed_action_num,
                         "reward": self.env.calculate_reward(),
-                        "is_prediction": self.player.last_action_info["is_prediction"],
-                        "action_stats": self.player.action_stats,
-                        "agent": self.player.get_wandb_dict(),
+                        "player": p_dict,
+                        "env": e_dict,
                     }
                 )
 
@@ -546,9 +518,6 @@ class PlaySession:
                 # This feels like the wrong solution.
                 ctx.placement = None
 
-                # self.env.render(ctx, title="Clean-up")
-                # time.sleep(0.3)
-
                 last_context = ctx
 
                 if last_context.ends_game:
@@ -556,3 +525,5 @@ class PlaySession:
 
             # Game Over
             self.player.on_episode_end(self.env)
+
+        self.env.on_session_end()

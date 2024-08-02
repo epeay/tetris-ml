@@ -1,7 +1,12 @@
 from collections import deque
+from dataclasses import dataclass
 from io import StringIO
 import sys
 import gymnasium as gym
+from pandas import DataFrame
+import pandas as pd
+from pyparsing import col
+import wandb
 
 from tetrisml.base import ActionContext
 
@@ -10,9 +15,11 @@ from .env import E_BEFORE_INPUT, E_MINO_SETTLED, ActionFeedback, TetrisEnv
 from .tetrominos import Tetrominos
 from .minos import MinoShape
 from .env import MinoBag
-from .base import BaseBag, BaseEnv, ContextPlacement
+from .base import BaseBag, BaseEnv, ContextPlacement, ModelAction
 import random
 import numpy as np
+
+import utils
 
 
 from tetrisml import board
@@ -35,16 +42,34 @@ class DigBag(BaseBag):
         return self.popleft()
 
 
+class DigEnvConfig:
+    def __init__(self):
+        self.board_height: int = 20
+        self.board_width: int = 10
+        self.seed = utils.word_id()
+
+
 class DigEnv(BaseEnv):
-    def __init__(self, seed=None):
-        self.board_height = 10
-        self.board_width = 5
+    def __init__(self, config: DigEnvConfig):
+        super().__init__()
+        self.board_height = config.board_height
+        self.board_width = config.board_width
+
         self.board = DigBoard(
             np.zeros((self.board_height, self.board_width), dtype=int),
             self.board_height,
-            seed=seed,
         )
         self.bag = DigBag()
+        self.stats_table = DataFrame(
+            columns=[
+                "Shape",
+                "Rotation",
+                "Column",
+                "Correct",
+                "Incorrect",
+                "Total",
+            ]
+        )
 
     def reset(self):
         pass
@@ -95,13 +120,27 @@ class DigEnv(BaseEnv):
             "seed": self.board.seed,
         }
 
+    def get_wandb_dict(self) -> dict:
+        return self.get_debug_dict()
+
     def on_before_input(self, ctx: ActionContext, p_ctx: ActionContext):
         self.board.setup()
 
         # TODO Store board state in context
 
+    def on_action_commit(self, ctx: ActionContext):
+        pass
+
+    def on_session_end(self):
+        t = wandb.Table(dataframe=self.stats_table)
+        wandb.log({"action_stats_table": t})
+
     def get_current_mino(self) -> MinoShape:
         return self.board.get_current_mino()
+
+    def is_episode_over(self, ctx: ActionContext) -> bool:
+        if ctx.valid_action:
+            return True  # Default for one-step games
 
     def is_valid_action(self, ctx: ActionContext) -> tuple[bool, dict]:
         """
@@ -124,9 +163,43 @@ class DigEnv(BaseEnv):
 
         return True, {}
 
+    def record_action(self, action: ModelAction, correct: bool):
+        table = self.stats_table
+        col, rotation = action
+        col += 1
+
+        shape_name = Tetrominos.shape_name(self.get_current_mino().shape_id)
+
+        sol: DigBoardSolution = self.board.solution[0]
+        outcome = "Correct" if correct else "Incorrect"
+
+        mask = (
+            (table["Shape"] == shape_name)
+            & (table["Rotation"] == rotation)
+            & (table["Column"] == col)
+        )
+
+        if not table[mask].empty:
+            table.loc[mask, "Total"] += 1
+            table.loc[mask, outcome] += 1
+        else:
+            # I don't think this append happens in place
+            new_row = pd.DataFrame(
+                [
+                    {
+                        "Shape": shape_name,
+                        "Rotation": rotation,
+                        "Column": col,
+                        "Correct": 1 if correct else 0,
+                        "Incorrect": 1 if not correct else 0,
+                        "Total": 1,
+                    }
+                ]
+            )
+            self.stats_table = pd.concat([table, new_row], ignore_index=True)
+
     def commit_action(self, ctx: ActionContext):
         col, rotation = ctx.player_action
-        done = False
 
         mino = MinoShape(self.get_current_mino().shape_id, rotation)
         lcoords = self.board.find_logical_BL_coords(mino, col)
@@ -139,7 +212,7 @@ class DigEnv(BaseEnv):
 
         correct = self.calculate_reward() == 2.0
 
-        ctx.ends_game = True
+        self.record_action(ctx.player_action, correct)
 
     def post_commit(self, ctx: ActionContext):
         # If any lines are full, save the intermediate state
@@ -160,6 +233,13 @@ class DigEnv(BaseEnv):
         return board.calculate_reward(self.board.board)
 
 
+@dataclass
+class DigBoardSolution:
+    shape: str
+    rotation: int
+    column: int
+
+
 class DigBoard(TetrisBoard):
     def __init__(self, matrix: np.ndarray, height: int, seed=None):
         super().__init__(matrix, height)
@@ -170,6 +250,8 @@ class DigBoard(TetrisBoard):
         self.mino_queue = deque()
 
         self.env = None
+
+        self.solution: list[DigBoardSolution] = []
 
     def __repr__(self) -> str:
         buffer = StringIO()
@@ -233,14 +315,16 @@ class DigBoard(TetrisBoard):
         """
         allowed_configurations = [
             (Tetrominos.O, 0),
-            # (Tetrominos.I, 1),
-            # (Tetrominos.S, 1),
-            # (Tetrominos.Z, 1),
-            # (Tetrominos.J, 1),
-            # (Tetrominos.L, 2),
-            # (Tetrominos.T, 1),
-            # (Tetrominos.T, 3),
+            (Tetrominos.I, 1),
+            (Tetrominos.S, 1),
+            (Tetrominos.Z, 1),
+            (Tetrominos.J, 1),
+            (Tetrominos.L, 2),
+            (Tetrominos.T, 1),
+            (Tetrominos.T, 3),
         ]
+
+        self.solution = []
 
         # Pick a winning placement, and construct a board, for that placement.
         chosen_config = self.rng.choice(allowed_configurations)
@@ -249,6 +333,10 @@ class DigBoard(TetrisBoard):
         mino = MinoShape(chosen_config[0], chosen_config[1])
         col_range = self.width - mino.width + 1
         col = self.rng.randint(1, col_range)
+
+        shape_name = Tetrominos.shape_name(chosen_config[0])
+        self.solution.append(DigBoardSolution(shape_name, chosen_config[1], col))
+
         stage_board = TetrisBoard(np.zeros((4, self.width), dtype=int), 4)
         stage_board.place_shape(mino, (1, col))
 

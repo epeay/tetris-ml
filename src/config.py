@@ -9,7 +9,6 @@ WORKSPACE_ROOT = os.path.abspath(os.path.join(WORKSPACE_ROOT, ".."))
 
 # fmt: off
 hp = {
-    "epochs": 1000,
     "model": {
         "arch": "cnn1",
         "input_channels": 1,
@@ -31,9 +30,6 @@ hp = {
     "game": {
         "type": "dig",
         "seed": None,
-        "args": {
-            "episode_length": 1,
-        }
     },
     "env": {
         "project_name": "tetris-ml",

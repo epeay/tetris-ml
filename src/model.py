@@ -1,3 +1,4 @@
+from operator import inv
 import gymnasium as gym
 import json
 import numpy as np
@@ -456,7 +457,7 @@ class DQNAgent(BasePlayer):
         state.set_mino_one_hot(Tetrominos.get_num_tetrominos(), e.current_mino.shape_id)
         return state
 
-    def play(self, ctx: ActionContext, env: BaseEnv) -> tuple[ModelAction, dict]:
+    def play(self, env: BaseEnv) -> ModelAction:
 
         self.last_action_info = {}
         lai = self.last_action_info
@@ -474,22 +475,28 @@ class DQNAgent(BasePlayer):
         self.pending_memory.state = curr_state
         self.pending_memory.action = action
 
-        return action, self.pending_memory
+        return action
 
-    def on_commit_action(self, env: TetrisEnv, ctx: ActionContext, memory: ModelMemory):
+    def on_invalid_input(self, ctx: ActionContext):
 
-        # Do the thing. Apply the action, choose the next piece, etc
-        # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        # next_board_state, reward, done, info = env.step(action)
-        # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        # State remains unchanged
+        self.pending_memory.next_state = self.pending_memory.state
+        self.pending_memory.reward = -1
+        self.pending_memory.done = False  # TODO Should be influenced by the env.
+        memory = self.pending_memory.to_tuple()
+        print("Punishing invalid move")
+        self.remember(*memory)
+
+    def on_action_commit(
+        self,
+        env: TetrisEnv,
+        ctx: ActionContext,
+        memory: ModelMemory,
+    ):
 
         next_state = self.make_model_state(env)
-
-        next_state.set_mino_one_hot(
-            Tetrominos.get_num_tetrominos(), env.current_mino.shape
-        )
-
         self.pending_memory.next_state = next_state
+
         reward = env.calculate_reward()
         self.pending_memory.reward = reward
 
@@ -500,15 +507,8 @@ class DQNAgent(BasePlayer):
         self.action_stats[modality][outcome_str] += 1
         self.action_stats[modality]["total"] += 1
 
-        # TODO Move this to a config var
-        # if env.record.moves >= 100:
-        #     print("Hit move cap")
-        #     done = True
-
         self.pending_memory.done = ctx.ends_game
-
         memory = self.pending_memory.to_tuple()
-
         self.remember(*memory)
 
     def get_wandb_dict(self):
@@ -725,12 +725,59 @@ class DQNAgent(BasePlayer):
 
 
 class ModelPlayer(BasePlayer):
-    def __init__(self, model: DQNAgent):
-        self.model = model
 
-    def play(self, env: TetrisEnv):
-        pass
+    def __init__(self, model: TetrisCNN):
+        self.model: TetrisCNN = model
 
-    def make_model_state(self, e: TetrisEnv) -> ModelState:
-        state = ModelState(e.board)
+    def make_model_state(self, e: BaseEnv) -> ModelState:
+        """
+        TODO Duplicate code from DQNAgent. Cleanup.
+        """
+        state = ModelState(e.board.export_board())
         state.set_mino_one_hot(Tetrominos.get_num_tetrominos(), e.current_mino.shape_id)
+        return state
+
+    def get_wandb_dict(self):
+        return {
+            "is_prediction": False,
+        }
+
+    def predict(self, state: ModelState) -> ModelAction:
+        """
+        TODO Duplicate code from DQNAgent. Cleanup.
+        """
+        # (24, 10) -> (1, 1, 24, 10)
+        # For (batch_size, channels, height, width)
+        board = torch.FloatTensor(state.board)
+        while len(board.shape) < 4:
+            board = board.unsqueeze(0)
+
+        linear_data = torch.FloatTensor(state.get_linear_data())
+
+        q_values = self.model(board, linear_data)
+        action_index = torch.argmax(q_values).item()
+        return (action_index // 4, action_index % 4)
+
+    def play(self, env: TetrisEnv) -> tuple[ModelAction, dict]:
+        state = self.make_model_state(env)
+        action = self.predict(state)
+        return action
+
+    def on_action_commit(self, e: BaseEnv, action: ModelAction, done: bool):
+        return super().on_action_commit(e, action, done)
+
+    @staticmethod
+    def from_checkpoint(checkpoint_path: str, config: dict) -> "ModelPlayer":
+        cp: ModelCheckpoint = torch.load(checkpoint_path)
+        m = TetrisCNN(
+            cp.model_id,
+            cp.input_channels,
+            cp.board_height,
+            cp.board_width,
+            cp.action_dim,
+            cp.linear_data_dim,
+        )
+        self.model.load_state_dict(cp.model_state)
+
+    def save(self, path: str):
+        torch.save(self.model.state_dict(), path)

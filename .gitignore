@@ -16,4 +16,4 @@
 /keep**
 /.vscode/
 /wandb/
-
+/cuda/

@@ -1,3 +1,6 @@
 wandb
 tensorflow
 numpy
+torch
+torchvision
+rorchaudio

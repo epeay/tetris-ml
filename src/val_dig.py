@@ -5,7 +5,7 @@ import random
 import sys
 
 import wandb
-from model import DQNAgent
+from model import DQNAgent, ModelPlayer
 from tetrisml.dig import DigBoard, DigEnv, DigEnvConfig
 from tetrisml.env import PlaySession, TetrisEnv, E_MINO_SETTLED
 from tetrisml.minos import MinoShape
@@ -81,70 +81,25 @@ def make_model_player():
 
 # p = RandomPlayer()
 
-if p is None:
-    p = make_model_player()
-sesh = PlaySession(e, p)
+p = make_model_player()
+p.load_model(os.path.join(config.model_storage_dir, "240801-light-voice.pth"))
+p = ModelPlayer(p.model)
 
-data = {}
-data["training"] = {}
-data["eval"] = {}
-data["eval_from_load"] = {}
-
-import time
-
-start = time.time()
+p.model.eval()
 
 validation_game_seed = "whiff-adorn-1"  # hardcoded for this milestone
 
-while sesh.player.exploration_rate > 0.1:
-    sesh.play_game(100, render=False)
-
-print("Trained! Elapsed time:", time.time() - start)
-time.sleep(0.3)
-
 ymd = datetime.datetime.now().strftime("%y%m%d")
 p: DQNAgent = p
-save_path = os.path.join(config.model_storage_dir, f"{ymd}-{p.model.id}.pth")
-p.save_model(save_path)
-print(f"Model saved to {save_path}")
-
-
-p.load_model(save_path)
-
-sys.exit()
-
-
-data["training"] = p.action_stats
-p.reset_action_stats()
 
 ##########################################
 
 dc.seed = validation_game_seed
 
 sesh = PlaySession(DigEnv(dc), p)
-p.eval()
+# p.eval()
 
 sesh.play_game(1000)
-data["eval"] = p.action_stats
 
 sys.exit()
 #########################################
-
-load_path = save_path
-# load_path = os.path.join(config.model_storage_dir, "eager-piano.pth")
-
-# Load the model and play some games
-p = make_model_player()
-p.load_model(load_path)
-print(f"Model loaded from {load_path}")
-
-# No training. All predictions.
-p.eval()
-sesh = PlaySession(DigEnv(), p)
-sesh.play_game(1000)
-data["eval_from_load"] = p.action_stats
-
-pprint.pprint(data)
-
-
-print("Done")

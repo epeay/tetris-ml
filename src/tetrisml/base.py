@@ -1,3 +1,4 @@
+from ast import Call
 from collections import deque
 from typing import NewType
 
@@ -22,14 +23,14 @@ class BaseBag(deque):
         raise NotImplementedError("pull() must be implemented by subclass")
 
     def peek(length: int = None) -> int:
-        raise NotImplementedError("peek() must be implemented by subclass")
+        raise NotImplementedError(f"peek() must be implemented by subclass")
 
 
 class ActionContext:
 
     def __init__(self):
         self.starting_board = None
-        self.player_action = None
+        self.player_action: ModelAction = None
         self.valid_action: bool = None
         self.placement: ContextPlacement = None
         self.lines_cleared: int = None
@@ -55,11 +56,34 @@ class BaseBoard:
         raise NotImplementedError("export_board() must be implemented by subclass")
 
 
+class CallbackHandler:
+    """
+    Allows external entities to register callbacks for various events.
+    """
+
+    def __init__(self):
+        self.callbacks = {}
+
+    def register(self, event: str, callback):
+        if event not in self.callbacks:
+            self.callbacks[event] = []
+
+        self.callbacks[event].append(callback)
+
+    def call(self, event: str, *args, **kwargs):
+        if event not in self.callbacks:
+            return
+
+        for cb in self.callbacks[event]:
+            cb(*args, **kwargs)
+
+
 class BaseEnv:
     def __init__(self):
         self.board_height: int = 0
         self.board_width: int = 0
         self.board: BaseBoard = None
+        self.events: CallbackHandler = CallbackHandler()
 
     def get_current_mino(self) -> MinoShape:
         raise NotImplementedError("get_current_mino() must be implemented by subclass")
@@ -78,6 +102,9 @@ class BaseEnv:
 
     def on_before_input(self, ctx: ActionContext, p_ctx: ActionContext):
         raise NotImplementedError("on_before_input() must be implemented by subclass")
+
+    def is_episode_over(self, ctx: ActionContext):
+        raise NotImplementedError("is_episode_over() must be implemented by subclass")
 
     def is_valid_action(self, ctx: ActionContext):
         raise NotImplementedError("is_valid_action() must be implemented by subclass")
@@ -99,10 +126,13 @@ class BasePlayer:
     def play(self, e: BaseEnv) -> ModelAction:
         pass
 
-    def on_episode_start(self):
+    def on_episode_start(self, e: BaseEnv):
         pass
 
     def on_episode_end(self, e: BaseEnv):
+        pass
+
+    def on_invalid_input(self, ctx: ActionContext):
         pass
 
     def on_action_commit(self, e: BaseEnv, action: ModelAction, done: bool):
