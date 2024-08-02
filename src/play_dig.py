@@ -7,7 +7,7 @@ import sys
 import wandb
 from model import DQNAgent
 from tetrisml.dig import DigBoard, DigEnv, DigEnvConfig
-from tetrisml.env import PlaySession, TetrisEnv, E_MINO_SETTLED
+from tetrisml.env import PlaySession, TetrisEnv
 from tetrisml.minos import MinoShape
 from tetrisml.tetrominos import Tetrominos
 

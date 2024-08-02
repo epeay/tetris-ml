@@ -7,7 +7,7 @@ import sys
 import wandb
 from model import DQNAgent, ModelPlayer
 from tetrisml.dig import DigBoard, DigEnv, DigEnvConfig
-from tetrisml.env import PlaySession, TetrisEnv, E_MINO_SETTLED
+from tetrisml.env import PlaySession, TetrisEnv
 from tetrisml.minos import MinoShape
 from tetrisml.tetrominos import Tetrominos
 
@@ -82,7 +82,7 @@ def make_model_player():
 # p = RandomPlayer()
 
 p = make_model_player()
-p.load_model(os.path.join(config.model_storage_dir, "240801-light-voice.pth"))
+p.load_model(os.path.join(config.model_storage_dir, "240802-stiff-field.pth"))
 p = ModelPlayer(p.model)
 
 p.model.eval()

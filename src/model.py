@@ -1,3 +1,4 @@
+from calendar import c
 from operator import inv
 import gymnasium as gym
 import json
@@ -16,6 +17,7 @@ import random
 from collections import deque
 import os
 
+import observer
 from player import BasePlayer
 
 from tetrisml.base import ActionContext, BaseEnv
@@ -728,6 +730,7 @@ class ModelPlayer(BasePlayer):
 
     def __init__(self, model: TetrisCNN):
         self.model: TetrisCNN = model
+        self.action_stats = observer.ActionTracker()
 
     def make_model_state(self, e: BaseEnv) -> ModelState:
         """
@@ -737,10 +740,24 @@ class ModelPlayer(BasePlayer):
         state.set_mino_one_hot(Tetrominos.get_num_tetrominos(), e.current_mino.shape_id)
         return state
 
+    def get_debug_dict(self):
+        return self.get_wandb_dict()
+
     def get_wandb_dict(self):
-        return {
-            "is_prediction": False,
+
+        p_stats = self.action_stats.actions[observer.ActionTracker.T_PREDICT]
+        ret = {
+            "is_prediction": True,
+            "stats": {
+                "predict": {
+                    "0": p_stats["0"],
+                    "1": p_stats["1"],
+                    "total": p_stats["total"],
+                },
+            },
         }
+        print("Printing wandb dict")
+        return ret
 
     def predict(self, state: ModelState) -> ModelAction:
         """
@@ -764,7 +781,10 @@ class ModelPlayer(BasePlayer):
         return action
 
     def on_action_commit(self, e: BaseEnv, action: ModelAction, done: bool):
-        return super().on_action_commit(e, action, done)
+        super().on_action_commit(e, action, done)
+        reward = e.calculate_reward()
+        correct = reward == 2
+        self.action_stats.register_action(observer.ActionTracker.T_PREDICT, correct)
 
     @staticmethod
     def from_checkpoint(checkpoint_path: str, config: dict) -> "ModelPlayer":
@@ -777,7 +797,7 @@ class ModelPlayer(BasePlayer):
             cp.action_dim,
             cp.linear_data_dim,
         )
-        self.model.load_state_dict(cp.model_state)
+        m.model.load_state_dict(cp.model_state)
 
     def save(self, path: str):
         torch.save(self.model.state_dict(), path)

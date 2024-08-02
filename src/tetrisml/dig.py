@@ -5,13 +5,12 @@ import sys
 import gymnasium as gym
 from pandas import DataFrame
 import pandas as pd
-from pyparsing import col
 import wandb
 
 from tetrisml.base import ActionContext
 
 from .board import TetrisBoard
-from .env import E_BEFORE_INPUT, E_MINO_SETTLED, ActionFeedback, TetrisEnv
+from .env import ActionFeedback, TetrisEnv
 from .tetrominos import Tetrominos
 from .minos import MinoShape
 from .env import MinoBag

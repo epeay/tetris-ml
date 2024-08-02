@@ -18,6 +18,8 @@ from tetrisml.minos import MinoPlacement, MinoShape
 from tetrisml.board import TetrisBoard
 from tetrisml.logging import TetrisGameRecord
 
+from .base import CallbackHandler
+
 import numpy as np
 from numpy import ndarray
 
@@ -131,8 +133,8 @@ class TetrisEnv(gym.Env):
 
         return True, {}
 
-    def on_before_input(self):
-        self.events.call(E_BEFORE_INPUT)
+    # def on_before_input(self):
+    #     self.events.call(E_BEFORE_INPUT)
 
     def debug_output(self, placed_mino, lcoords):
         pass
@@ -155,7 +157,7 @@ class TetrisEnv(gym.Env):
         self.render()
 
         self.board.place_shape(mino, lcoords)
-        self.events.call(E_MINO_SETTLED, mino, lcoords)
+        # self.events.call(E_MINO_SETTLED, mino, lcoords)
 
         # self.stats.total_placements += 1
         # self.record.moves += 1
@@ -231,7 +233,7 @@ class TetrisEnv(gym.Env):
         lcoords = self.board.find_logical_BL_coords(mino, col)
         self.board.place_shape(mino, lcoords)
 
-        self.events.call(E_MINO_SETTLED, mino, lcoords)
+        # self.events.call(E_MINO_SETTLED, mino, lcoords)
 
         self.stats.total_placements += 1
         self.record.moves += 1
@@ -272,9 +274,9 @@ class TetrisEnv(gym.Env):
         # If any lines are full
         line_clear = np.any([sum(x) == self.board_width for x in self.board.board])
 
-        if line_clear:
-            # TODO Send the board before and after the clears
-            self.events.call(E_LINE_CLEAR)
+        # if line_clear:
+        # TODO Send the board before and after the clears
+        # self.events.call(E_LINE_CLEAR)
 
         # Huzzah!
         lines_gone = self.board.remove_tetris()
@@ -394,6 +396,8 @@ class PlaySession:
     A simple connector between player and environment
     """
 
+    E_ACTION_COMMITTED = "action_committed"
+
     def __init__(self, e: BaseEnv, p: BasePlayer):
         self.env: BaseEnv = e
         self.player: BasePlayer = p
@@ -401,6 +405,17 @@ class PlaySession:
 
         self.episode_num: int = 0
         self.committed_action_num: int = 0
+
+    def _render_dict(self, indent: str, d: dict):
+        ret = []
+        for k, v in d.items():
+            if isinstance(v, dict):
+                ret.append(f"{indent}{k}:")
+                ret += self._render_dict(indent + "  ", v)
+            else:
+                ret.append(f"{indent}{k}: {v}")
+
+        return ret
 
     def render(self):
         """
@@ -434,9 +449,12 @@ class PlaySession:
 
         rhs = []
         rhs.append(header)
+
         rhs.append("Player Info:")
-        for k, v in player.items():
-            rhs.append(f"  {k}: {v}")
+        rhs += self._render_dict("", player)
+
+        # for k, v in player.items():
+        #     rhs.append(f"  {k}: {v}")
 
         rhs.append("Env Info:")
         for k, v in env.items():
@@ -469,6 +487,7 @@ class PlaySession:
 
             while True:
                 ctx = ActionContext()
+                ctx.session = self
                 player_data = None
 
                 self.env.on_before_input(ctx, last_context)
@@ -492,6 +511,7 @@ class PlaySession:
 
                 self.player.on_action_commit(self.env, ctx, ctx.player_ctx)
                 self.env.on_action_commit(ctx)
+                self.events.call(PlaySession.E_ACTION_COMMITTED, self, ctx)
 
                 p_dict = self.player.get_wandb_dict()
                 e_dict = self.env.get_wandb_dict()
@@ -512,6 +532,7 @@ class PlaySession:
                     print(".", end="")
 
                 self.env.post_commit(ctx)
+                # self.player.on_post_commit(ctx)
 
                 # After board clean-up, clear the placement data so that it isn't
                 # used to highlight board placements on rows that have been cleared.

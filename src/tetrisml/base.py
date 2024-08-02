@@ -38,6 +38,7 @@ class ActionContext:
         self.intermediate_board = None
         self.final_board = None
         self.ends_game: bool = False
+        self.session = None  # Temporary Hack
 
         # A pocket dimension for the env to store anything else it needs.
         self.env_ctx: object = None
