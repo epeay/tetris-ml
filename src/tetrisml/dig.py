@@ -1,4 +1,4 @@
-from collections import deque
+from collections import defaultdict, deque
 from dataclasses import dataclass
 from io import StringIO
 import sys
@@ -18,9 +18,7 @@ from .base import BaseBag, BaseEnv, ContextPlacement, ModelAction
 import random
 import numpy as np
 
-import utils
-
-
+random
 from tetrisml import board
 
 
@@ -45,7 +43,7 @@ class DigEnvConfig:
     def __init__(self):
         self.board_height: int = 20
         self.board_width: int = 10
-        self.seed = utils.word_id()
+        self.seed = None
 
 
 class DigEnv(BaseEnv):
@@ -53,10 +51,13 @@ class DigEnv(BaseEnv):
         super().__init__()
         self.board_height = config.board_height
         self.board_width = config.board_width
+        self.seed = config.seed
+        self.rng = random.Random(self.seed)
 
         self.board = DigBoard(
             np.zeros((self.board_height, self.board_width), dtype=int),
             self.board_height,
+            seed=self.seed,
         )
         self.bag = DigBag()
         self.stats_table = DataFrame(

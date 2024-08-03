@@ -4,6 +4,9 @@ import pprint
 import random
 import sys
 
+import numpy as np
+from pandas import DataFrame
+import torch
 import wandb
 from model import DQNAgent, ModelPlayer
 from tetrisml.dig import DigBoard, DigEnv, DigEnvConfig
@@ -21,9 +24,23 @@ os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 import tensorflow as tf  # type: ignore
 
+
+def set_seed(seed):
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    tf.random.set_seed(seed)
+
+
+# set_seed(42)
+
+
 # Verify TensorFlow is using CPU
 print("Num GPUs Available: ", len(tf.config.experimental.list_physical_devices("GPU")))
-
 
 wandb.require("core")
 
@@ -101,5 +118,17 @@ sesh = PlaySession(DigEnv(dc), p)
 
 sesh.play_game(1000)
 
-sys.exit()
+
+stats: DataFrame = sesh.env.stats_table
+stats.sort_values(["Shape", "Rotation", "Correct"], inplace=True)
+
+s = stats.groupby(["Shape"]).agg(
+    {
+        "Total": ["sum"],
+    }
+)
+
+
+print(s.to_string())
+print("done")
 #########################################
