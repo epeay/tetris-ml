@@ -5,7 +5,6 @@ import random
 import sys
 import time
 
-from torch import dropout
 import wandb
 from model import DQNAgent, DQNAgentConfig, TetrisCNN, TetrisCNNConfig
 from tetrisml.dig import DigBoard, DigEnv, DigEnvConfig
@@ -24,37 +23,19 @@ import tensorflow as tf  # type: ignore
 
 assert len(tf.config.experimental.list_physical_devices("GPU")) == 0
 
-wandb.require("core")
-config: TMLConfig = load_config()
-hp: Hyperparameters = Hyperparameters()
 
-hp.game.seed = config.model_id
-
-wandb_config = {
-    "cfg": config,
-    "hp": hp,
+sweep_config = {
+    "name": "dig-sweep",
+    "method": "random",
+    "metric": {"name": "player.loss", "goal": "minimize"},
+    "parameters": {
+        "lr": {"max": 0.1, "min": 0.001},
+        "dropout": {"max": 0.5, "min": 0.0},
+    },
 }
-wandb.init(
-    project=config.project_name,
-    config=wandb_config,
-    name=config.run_id,
-)
 
 
-# Some config values are set at runtime
-hp.model.action_dim = hp.board.width * 4  # 4 mino rotations
-hp.model.linear_data_dim = Tetrominos.get_num_tetrominos()
-
-wandb.config.update(wandb_config, allow_val_change=True)
-
-e = DigEnv(
-    DigEnvConfig(
-        board_height=hp.board.height,
-        board_width=hp.board.width,
-        seed=hp.game.seed,
-    )
-)
-
+wandb.require("core")
 p = None
 
 
@@ -97,72 +78,51 @@ def make_model_player(cfg: TMLConfig, hp: Hyperparameters) -> DQNAgent:
     return p
 
 
-# p = RandomPlayer()
+def run_sweep():
 
-if p is None:
+    config: TMLConfig = load_config()  # Generates a new run_id
+    hp: Hyperparameters = Hyperparameters()
+    hp.game.seed = config.model_id
+
+    # Some config values are set at runtime
+    hp.model.action_dim = hp.board.width * 4  # 4 mino rotations
+    hp.model.linear_data_dim = Tetrominos.get_num_tetrominos()
+
+    wandb_config = {
+        "cfg": config,
+        "hp": hp,
+    }
+    wandb.init(
+        project=config.project_name,
+        config=wandb_config,
+        # name=config.run_id,
+    )
+
+    # Apply sweep overrides
+    hp.agent.learning_rate = wandb.config.lr
+    hp.model.dropout_rate = wandb.config.dropout
+
+    wandb.config.update(wandb_config, allow_val_change=True)
+
+    e = DigEnv(
+        DigEnvConfig(
+            board_height=hp.board.height,
+            board_width=hp.board.width,
+            seed=hp.game.seed,
+        )
+    )
+
     p = make_model_player(config, hp)
-sesh = PlaySession(e, p)
+    sesh = PlaySession(e, p)
 
-data = {}
-data["training"] = {}
-data["eval"] = {}
-data["eval_from_load"] = {}
+    start = config.unix_ts
 
-import time
+    while p.exploration_rate > 0.1:
+        sesh.play_game(100, render=False)
 
-start = time.time()
-
-validation_game_seed = "whiff-adorn-1"  # hardcoded for this milestone
-
-while sesh.player.exploration_rate > 0.1:
-    sesh.play_game(100, render=False)
-
-print("Trained! Elapsed time:", time.time() - start)
-time.sleep(0.3)
+    print("Trained! Elapsed time:", time.time() - start)
 
 
-p: DQNAgent = p
-save_path = os.path.join(config.model_storage_dir, f"{config.model_id}.pth")
-p.save_model(save_path)
-print(f"Model saved to {save_path}")
+sweep_id = wandb.sweep(sweep_config, project="tetris-ml")
 
-
-p.load_model(save_path)
-
-sys.exit()
-
-
-data["training"] = p.action_stats
-p.reset_action_stats()
-
-##########################################
-
-dc.seed = validation_game_seed
-
-sesh = PlaySession(DigEnv(dc), p)
-p.eval()
-
-sesh.play_game(1000)
-data["eval"] = p.action_stats
-
-sys.exit()
-#########################################
-
-load_path = save_path
-# load_path = os.path.join(config.model_storage_dir, "eager-piano.pth")
-
-# Load the model and play some games
-p = make_model_player()
-p.load_model(load_path)
-print(f"Model loaded from {load_path}")
-
-# No training. All predictions.
-p.eval()
-sesh = PlaySession(DigEnv(), p)
-sesh.play_game(1000)
-data["eval_from_load"] = p.action_stats
-
-pprint.pprint(data)
-
-
-print("Done")
+wandb.agent(sweep_id, function=run_sweep, count=30)

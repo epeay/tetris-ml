@@ -1,82 +1,92 @@
+from dataclasses import dataclass, field
+import datetime
 import os
 import yaml  # type: ignore
 import utils
+from typing import Optional
 
 # ../
 WORKSPACE_ROOT = os.path.dirname(os.path.realpath(__file__))
 WORKSPACE_ROOT = os.path.abspath(os.path.join(WORKSPACE_ROOT, ".."))
 
 
-# fmt: off
-hp = {
-    "model": {
-        "arch": "cnn1",
-        "input_channels": 1,
-        "action_dim": 10,
-        "linear_data_dim": 9,
-    },
-    "agent": {
-        "exploration_rate": 0.1,
-        "exploration_decay": 0.99,
-        "learning_rate": 0.01,
-        "batch_size": 64,
-        "replay_memory_size": 1000,
-        "target_update_freq": 100,
-    },
-    "board": {
-        "height": 10,
-        "width": 5,
-    },
-    "game": {
-        "type": "dig",
-        "seed": None,
-    },
-    "env": {
-        "project_name": "tetris-ml",
-        "git_hash_short": None,
-        "git_pristine": False,
-        "unix_ts": None,
-    },
-}
-# fmt: on
+@dataclass
+class ModelHP:
+    arch: str = "cnn2"  # Not a tunable
+    input_channels: int = 1  # Not a tunable
+    dropout_rate: float = 0.1
+    linear_data_dim: int = 0  # Not a tunable. Must be overwritten at runtime.
+    action_dim: int = 0  # Not a tunable. Must be overwritten at runtime.
 
 
-class TMLConfig(dict):
-    """
-    These attributes don't actually get set on the class, but are stored in the
-    dict. However, defining the attributes helps with code completion and
-    type hinting.
+@dataclass
+class BoardHP:
+    height: int = 20
+    width: int = 10
 
-    The dict makes it trivial to merge in external values.
-    """
 
-    def __init__(self):
-        self.workspace_dir: str = os.path.normpath(WORKSPACE_ROOT)
-        self.storage_root: str = os.path.join(WORKSPACE_ROOT, "storage")
-        self.tensorboard_log_dir: str = os.path.join(self.storage_root, "tensor-logs")
-        self.model_storage_dir: str = os.path.join(self.storage_root, "models")
-        self.persist_logs: bool = False
-        self.git_short: str = utils.get_git_hash()
+@dataclass
+class GameHP:
+    type: str = "dig"
+    seed: Optional[int] = None
 
-    def __setattr__(self, key, value):
-        """Class properties become dict key/value pairs"""
-        self[key] = value
 
-    def __getattr__(self, key):
-        return self[key]
+@dataclass
+class AgentHP:
+    exploration_rate: float = 1.0
+    exploration_decay: float = 0.99
+    learning_rate: float = 0.01
+    batch_size: int = 64
+    replay_buffer_size: int = 1000
+
+
+@dataclass
+class Hyperparameters:
+    model: ModelHP = ModelHP()
+    agent: AgentHP = AgentHP()
+    board: BoardHP = BoardHP()
+    game: GameHP = GameHP()
+
+
+hp = Hyperparameters()
+
+
+@dataclass
+class TMLConfig:
+    unix_ts: float
+    run_id: str
+    model_id: str
+    workspace_dir: str
+    storage_root: str
+    tensorboard_log_dir: str
+    model_storage_dir: str
+    persist_logs: bool = False
+    git_short: str = field(default_factory=utils.get_git_hash)
+    git_pristine: bool = False
+    project_name: str = "tetris-ml"
 
 
 def load_config() -> TMLConfig:
-    # Create workspace directory
-    config = TMLConfig()
 
-    # Load ../config.yaml
-    config_path = os.path.join(os.getcwd(), "config.yaml")
-    with open(config_path, "r") as stream:
-        try:
-            config.update(yaml.safe_load(stream))
-        except yaml.YAMLError as exc:
-            print(exc)
+    unix_ts = int(datetime.datetime.now().timestamp())
+
+    dt = datetime.datetime.fromtimestamp(unix_ts)
+    ymd = dt.strftime("%y%m%d")
+
+    word_id = utils.word_id()
+    run_id = f"{ymd}-{word_id}"
+
+    # fmt: off
+    config = TMLConfig(
+        run_id                  = run_id,
+        model_id                = run_id,
+        workspace_dir           = WORKSPACE_ROOT,
+        storage_root            = os.path.join(WORKSPACE_ROOT, "storage"),
+        tensorboard_log_dir     = os.path.join(WORKSPACE_ROOT, "storage", "tensor-logs"),
+        model_storage_dir       = os.path.join(WORKSPACE_ROOT, "storage", "models"),
+        unix_ts                 = unix_ts,
+    )
+    # fmt: on
 
     os.makedirs(config.workspace_dir, exist_ok=True)
     os.makedirs(config.storage_root, exist_ok=True)

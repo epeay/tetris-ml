@@ -1,5 +1,4 @@
-from calendar import c
-from operator import inv
+from dataclasses import dataclass
 import gymnasium as gym
 import json
 import numpy as np
@@ -67,15 +66,39 @@ class ModelState:
         return ret
 
 
+"""
+cnn1:
+    conv1: 32 filters, 3x3 kernel, stride 1, padding 1
+    conv2: 64 filters, 3x3 kernel, stride 1, padding 1
+    fc1: 128 + linear_layer_input_dim units
+    fc2: action_dim units
+
+cnn2:
+    Adds a dropout layer
+
+    conv1: 32 filters, 3x3 kernel, stride 1, padding 1
+    conv2: 64 filters, 3x3 kernel, stride 1, padding 1
+    fc1: 128 units
+    dropout: configurable
+    fc2: action_dim units
+"""
+
+
+@dataclass
+class TetrisCNNConfig:
+    linear_layer_input_dim: int
+    model_id: str = None
+    input_channels: int = 1
+    board_height: int = 20
+    board_width: int = 10
+    action_dim: int = 40
+    dropout_rate: float = 0.0  # Prevents dropout
+
+
 class TetrisCNN(nn.Module):
     def __init__(
         self,
-        id,
-        input_channels,
-        board_height,
-        board_width,
-        action_dim,
-        linear_layer_input_dim=0,
+        config: TetrisCNNConfig,
     ):
         """
         Common param example:
@@ -84,22 +107,30 @@ class TetrisCNN(nn.Module):
             board_width: 10
             action_dim: 40  (10 columns * 4 rotations)
         """
+        super().__init__()
 
-        self.id = id
+        if config.model_id is None:
+            raise ValueError("Model ID must be set")
 
-        super(TetrisCNN, self).__init__()
-        self.conv1 = nn.Conv2d(input_channels, 32, kernel_size=3, stride=1, padding=1)
+        self.id = config.model_id
+        self.conv1 = nn.Conv2d(
+            config.input_channels, 32, kernel_size=3, stride=1, padding=1
+        )
+        self.conv2 = nn.Conv2d(
+            self.conv1.out_channels,
+            self.conv1.out_channels * 2,  # 64
+            kernel_size=3,
+            stride=1,
+            padding=1,
+        )
 
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1)
+        conv_output_size = (
+            self.conv2.out_channels * config.board_height * config.board_width
+        )
 
-        # Calculate the size of the flattened output from the CNN
-        conv_output_size = 64 * board_height * board_width
-        # linear_data_input_size = self.conv2.out_channels * linear_layer_input_dim
-
-        self.fc1 = nn.Linear(
-            conv_output_size + linear_layer_input_dim, 128
-        )  # Adjust based on input size
-        self.fc2 = nn.Linear(128, action_dim)
+        self.fc1 = nn.Linear(conv_output_size + config.linear_layer_input_dim, 128)
+        self.dropout = nn.Dropout(config.dropout_rate)
+        self.fc2 = nn.Linear(128, config.action_dim)
 
         self.intermediate_data = {}
         self.intermediate_gradients = {}
@@ -129,10 +160,11 @@ class TetrisCNN(nn.Module):
             linear_layer_input = linear_layer_input.squeeze(1)
 
         x = torch.cat((x, linear_layer_input), dim=1)
-
         fc1_out = self.fc1(x)
 
         x = torch.relu(fc1_out)
+        x = dropout_out = self.dropout(x)
+
         return self.fc2(x)
 
 
@@ -195,6 +227,28 @@ class ModelParams(dict):
         super().__setattr__(key, value)
 
 
+@dataclass
+class DQNAgentConfig:
+    # fmt: off
+    input_channels        : int   = 1
+    board_height          : int   = 20
+    board_width           : int   = 10
+
+    linear_data_dim       : int   = None
+    action_dim            : int   = 40
+    learning_rate         : float = 0.001
+    discount_factor       : float = 0.99
+    exploration_rate      : float = 1.0
+    exploration_decay     : float = 0.999
+    min_exploration_rate  : float = 0.01
+    replay_buffer_size    : int   = 10000
+    batch_size            : int   = 64
+    log_dir               : str   = ""
+    load_path             : str   = ""
+    model_id              : str   = ""
+    # fmt: on
+
+
 class DQNAgent(BasePlayer):
 
     MODE_UNSET = 0
@@ -202,39 +256,25 @@ class DQNAgent(BasePlayer):
 
     def __init__(
         self,
-        input_channels,
-        board_height,
-        board_width,
-        action_dim,
-        linear_data_dim=0,
-        learning_rate=0.001,
-        discount_factor=0.99,
-        exploration_rate=1.0,
-        exploration_decay=0.999,
-        min_exploration_rate=0.01,
-        replay_buffer_size=10000,
-        batch_size=64,
-        log_dir: str = None,
-        load_path: str = None,
-        model_id: str = None,
+        config: DQNAgentConfig,
+        model: TetrisCNN = None,
+        target_model: TetrisCNN = None,
     ):
-        """
-        If log_dir is not specified, no logs will be written.
-        """
-        self.discount_factor = discount_factor
-        self.exploration_rate = exploration_rate
-        self.exploration_decay = exploration_decay
-        self.min_exploration_rate = min_exploration_rate
-        self.replay_buffer = deque(maxlen=replay_buffer_size)
-        self.batch_size = batch_size
+
+        self.discount_factor = config.discount_factor
+        self.exploration_rate = config.exploration_rate
+        self.exploration_decay = config.exploration_decay
+        self.min_exploration_rate = config.min_exploration_rate
+        self.replay_buffer = deque(maxlen=config.replay_buffer_size)
+        self.batch_size = config.batch_size
         self.reset_key = None
         self.num_rotations = 4
         # Show board state just before sending to model
         self.see_model_view = False
         self.mode = DQNAgent.MODE_UNSET
 
-        self.board_height = board_height
-        self.board_width = board_width
+        self.board_height = config.board_height
+        self.board_width = config.board_width
 
         self.pending_memory = ModelMemory()
         self.replays_counter = 0
@@ -247,32 +287,21 @@ class DQNAgent(BasePlayer):
         self.last_action_info = {}
         self.train = True
 
-        if model_id is None:
-            model_id = utils.word_id()
+        if not len(config.model_id):
+            config.model_id = utils.word_id()
 
-        self.model = TetrisCNN(
-            model_id,
-            input_channels,
-            board_height,
-            board_width,
-            action_dim,
-            linear_data_dim,
-        )
-        self.target_model = TetrisCNN(
-            model_id,
-            input_channels,
-            board_height,
-            board_width,
-            action_dim,
-            linear_data_dim,
-        )
+        self.model = model
+        self.target_model = target_model
+
         self.update_target_model()
 
-        self.optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
+        self.optimizer = optim.Adam(self.model.parameters(), lr=config.learning_rate)
         self.loss_fn = nn.MSELoss()
         self.game_records = []
 
-        self.writer = SummaryWriter(log_dir) if log_dir is not None else None
+        self.writer = (
+            SummaryWriter(config.log_dir) if config.log_dir is not None else None
+        )
 
         self.agent_episode_count = 0
 
@@ -524,6 +553,7 @@ class DQNAgent(BasePlayer):
                 "0": self.action_stats["predict"]["incorrect"],
                 "total": self.action_stats["predict"]["total"],
             },
+            "loss": self.last_loss,
         }
 
         if sum(self.action_stats["guess"].values()) > 0:
@@ -568,6 +598,7 @@ class DQNAgent(BasePlayer):
             "move was": predict_str,
             "guess success  ": guess_stats_str,
             "predict success": predict_stats_str,
+            "last loss": self.last_loss,
         }
 
     def on_episode_start(self, env: BaseEnv):
@@ -717,6 +748,8 @@ class DQNAgent(BasePlayer):
         self.optimizer.step()
 
         self.replays_counter += self.batch_size
+
+        self.last_loss = loss
 
         return loss
 

@@ -2,6 +2,7 @@ from collections import defaultdict, deque
 from dataclasses import dataclass
 from io import StringIO
 import sys
+from typing import Any
 import gymnasium as gym
 from pandas import DataFrame
 import pandas as pd
@@ -18,7 +19,6 @@ from .base import BaseBag, BaseEnv, ContextPlacement, ModelAction
 import random
 import numpy as np
 
-random
 from tetrisml import board
 
 
@@ -39,11 +39,11 @@ class DigBag(BaseBag):
         return self.popleft()
 
 
+@dataclass
 class DigEnvConfig:
-    def __init__(self):
-        self.board_height: int = 20
-        self.board_width: int = 10
-        self.seed = None
+    board_height: int = 20
+    board_width: int = 10
+    seed: Any = None
 
 
 class DigEnv(BaseEnv):
