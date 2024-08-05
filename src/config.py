@@ -34,7 +34,7 @@ class GameHP:
 @dataclass
 class AgentHP:
     exploration_rate: float = 1.0
-    exploration_decay: float = 0.99
+    exploration_decay: float = 0.999
     learning_rate: float = 0.01
     batch_size: int = 64
     replay_buffer_size: int = 1000

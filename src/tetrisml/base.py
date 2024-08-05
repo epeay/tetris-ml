@@ -1,8 +1,10 @@
 from ast import Call
 from collections import deque
 from typing import NewType
+import gymnasium as gym
 
 from numpy import ndarray
+import numpy as np
 
 from .minos import MinoShape
 
@@ -46,17 +48,6 @@ class ActionContext:
         self.player_ctx: object = None
 
 
-class BaseBoard:
-    def __init__(self, matrix: ndarray, height):
-        self.play_height = height
-        self.height = len(matrix)
-        self.width = len(matrix[0])
-        self.board: ndarray = matrix
-
-    def export_board(self):
-        raise NotImplementedError("export_board() must be implemented by subclass")
-
-
 class CallbackHandler:
     """
     Allows external entities to register callbacks for various events.
@@ -79,8 +70,9 @@ class CallbackHandler:
             cb(*args, **kwargs)
 
 
-class BaseEnv:
+class BaseEnv(gym.Env):
     def __init__(self):
+        super().__init__()
         self.board_height: int = 0
         self.board_width: int = 0
         self.board: BaseBoard = None
@@ -101,6 +93,9 @@ class BaseEnv:
     def debug_output(self, *args, **kwargs):
         raise NotImplementedError("debug_output() must be implemented by subclass")
 
+    def on_action_commit(self, ctx: ActionContext):
+        raise NotImplementedError("on_action_commit() must be implemented by subclass")
+
     def on_before_input(self, ctx: ActionContext, p_ctx: ActionContext):
         raise NotImplementedError("on_before_input() must be implemented by subclass")
 
@@ -118,6 +113,53 @@ class BaseEnv:
 
     def get_debug_dict(self) -> dict:
         raise NotImplementedError("get_debug_dict() must be implemented by subclass")
+
+    def get_wandb_dict(self):
+        return {}
+
+    def post_commit(self, ctx: ActionContext):
+        pass
+
+    def on_session_end(self):
+        pass
+
+
+class BaseBoard:
+    def __init__(self, matrix: ndarray, height):
+        self.play_height = height
+
+    @property
+    def height(self):
+        return self.board.shape[0]
+
+    @property
+    def rows(self):
+        return self.height
+
+    @property
+    def width(self):
+        return self.board.shape[1]
+
+    @property
+    def cols(self):
+        return self.width
+
+    def export_board(self):
+        return BaseBoard(self.board.copy())
+
+    def get_pack(self) -> ndarray:
+        """
+        Pack refers to the number of filled cells in a given row. Returns the
+        pack of each row.
+        """
+        return self.board.sum(1)
+
+    def count_full_rows(self):
+        pack = self.get_pack()
+        return len([x for x in pack if x == self.width])
+
+    def do_instrumentation(self, env: BaseEnv):
+        pass
 
 
 class BasePlayer:
@@ -140,4 +182,7 @@ class BasePlayer:
         pass
 
     def get_debug_dict(self):
+        return {}
+
+    def get_wandb_dict(self):
         return {}

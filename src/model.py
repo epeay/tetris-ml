@@ -279,7 +279,7 @@ class DQNAgent(BasePlayer):
         self.pending_memory = ModelMemory()
         self.replays_counter = 0
         self.last_replay_episode = 0
-        self.last_loss = 0
+        self.last_loss: float = 0
 
         self.action_stats = {}
         self.reset_action_stats()
@@ -749,7 +749,7 @@ class DQNAgent(BasePlayer):
 
         self.replays_counter += self.batch_size
 
-        self.last_loss = loss
+        self.last_loss = loss.item()
 
         return loss
 

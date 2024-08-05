@@ -1,14 +1,22 @@
 import datetime
+from json import load
 import os
 import pprint
 import random
 import sys
 
+from setup import before_tensorflow  # fmt:skip
+before_tensorflow()
+import tensorflow as tf  # type: ignore
+
+from setup import make_model_player
 import numpy as np
 from pandas import DataFrame
 import torch
 import wandb
-from model import DQNAgent, ModelPlayer
+from config import Hyperparameters, TMLConfig, load_config
+from model import BasePlayer
+from model import DQNAgent, ModelPlayer, ModelCheckpoint, TetrisCNN, TetrisCNNConfig
 from tetrisml.dig import DigBoard, DigEnv, DigEnvConfig
 from tetrisml.env import PlaySession, TetrisEnv
 from tetrisml.minos import MinoShape
@@ -19,10 +27,6 @@ from config import load_config, hp
 import utils
 
 import time
-
-os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
-os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
-import tensorflow as tf  # type: ignore
 
 
 def set_seed(seed):
@@ -39,85 +43,69 @@ def set_seed(seed):
 # set_seed(42)
 
 
+def run_eval():
+
+    validation_game_seed = "whiff-adorn-1"
+
+    config = load_config()
+
+    hp: Hyperparameters = Hyperparameters()
+    hp.game.seed = validation_game_seed
+
+    # Some config values are set at runtime
+    hp.model.action_dim = hp.board.width * 4  # 4 mino rotations
+    hp.model.linear_data_dim = Tetrominos.get_num_tetrominos()
+
+    wandb.require("core")
+    wandb.init(
+        project=config.project_name,
+        config=hp,
+        name=config.run_id,
+    )
+
+    mc = TetrisCNNConfig(
+        model_id=config.model_id,
+        action_dim=hp.model.action_dim,
+        dropout_rate=hp.model.dropout_rate,
+        board_height=hp.board.height,
+        board_width=hp.board.width,
+        linear_layer_input_dim=hp.model.linear_data_dim,
+    )
+
+    dc = DigEnvConfig(
+        board_height=hp.board.height,
+        board_width=hp.board.width,
+        seed=hp.game.seed,
+    )
+
+    ### Config finalized
+
+    model: TetrisCNN = load_model_from_file(
+        os.path.join(config.model_storage_dir, "240804-clean-stone.pth"), mc
+    )
+    p = ModelPlayer(model)
+    e = DigEnv(dc)
+    sesh = PlaySession(e, p)
+
+    start = config.unix_ts
+    sesh.play_game(100)
+    print("Done! Elapsed time:", time.time() - start)
+
+    return sesh
+
+
 # Verify TensorFlow is using CPU
 print("Num GPUs Available: ", len(tf.config.experimental.list_physical_devices("GPU")))
 
-wandb.require("core")
 
-config = load_config()
-
-hyper = hp.copy()
-hyper["env"]["git_hash_short"] = config.git_short
-hyper["env"]["unix_ts"] = datetime.datetime.now().timestamp()
-
-
-model_id = utils.word_id()
-hyper["game"]["seed"] = model_id
+def load_model_from_file(path, config: TetrisCNNConfig) -> TetrisCNN:
+    checkpoint: ModelCheckpoint = torch.load(path)
+    model = TetrisCNN(config)
+    model.load_state_dict(checkpoint["model_state"])
+    return model
 
 
-wandb.init(
-    project=hyper["env"]["project_name"],
-    config=hyper,
-)
-
-h = hyper["board"]["height"] = 20
-w = hyper["board"]["width"] = 10
-
-
-p = None
-input_channels = 1
-action_dim = 4 * w  # 4 rotations
-linear_data_dim = Tetrominos.get_num_tetrominos()
-
-
-dc = DigEnvConfig()
-dc.board_height = h
-dc.board_width = w
-dc.seed = model_id
-
-
-e = DigEnv(dc)
-
-
-def make_model_player():
-    # Keeping this import separate because it's not always needed
-    # and tensorflow is slow to import
-    from model import DQNAgent
-
-    p = DQNAgent(
-        input_channels,
-        h,
-        w,
-        action_dim,
-        linear_data_dim=linear_data_dim,
-        model_id=model_id,
-    )
-
-    return p
-
-
-# p = RandomPlayer()
-
-p = make_model_player()
-p.load_model(os.path.join(config.model_storage_dir, "240802-stiff-field.pth"))
-p = ModelPlayer(p.model)
-
-p.model.eval()
-
-validation_game_seed = "whiff-adorn-1"  # hardcoded for this milestone
-
-ymd = datetime.datetime.now().strftime("%y%m%d")
-p: DQNAgent = p
-
-##########################################
-
-dc.seed = validation_game_seed
-
-sesh = PlaySession(DigEnv(dc), p)
-# p.eval()
-
-sesh.play_game(1000)
-
+sesh: PlaySession = run_eval()
 
 stats: DataFrame = sesh.env.stats_table
 stats.sort_values(["Shape", "Rotation", "Correct"], inplace=True)
@@ -128,7 +116,11 @@ s = stats.groupby(["Shape"]).agg(
     }
 )
 
+t = stats.groupby(["Shape", "Rotation", "Column"]).agg(
+    {"Total": ["sum"], "Correct": ["sum"], "Incorrect": ["sum"]}
+)
+t["pct"] = t["Correct"] / t["Total"]
 
-print(s.to_string())
+print(t.to_string())
 print("done")
 #########################################

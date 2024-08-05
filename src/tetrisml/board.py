@@ -5,16 +5,16 @@ from numpy import ndarray as NDArray
 
 from .minos import MinoShape
 from .tetrominos import TetrominoPiece
+from .base import BaseBoard
 
 
-class TetrisBoard:
+class TetrisBoard(BaseBoard):
 
     BLOCK = "▆"
 
     def __init__(self, matrix: NDArray, height):
+        super().__init__(matrix, height)
         self.play_height = height
-        self.height = len(matrix)
-        self.width = len(matrix[0])
         self.board: NDArray = np.array(matrix)
 
     def reset(self):
@@ -273,7 +273,7 @@ def calculate_reward(board: NDArray) -> float:
         tower_height += 1
 
     pct_board_full = sum(line_pack) / (w * tower_height)
-    return max(clears, 0)
+    return max(clears, pct_board_full)
 
 
 def clear_full_lines(board: NDArray):

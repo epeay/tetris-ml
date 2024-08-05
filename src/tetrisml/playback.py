@@ -8,9 +8,15 @@ from datetime import datetime
 
 class GameFrameCollection:
     def __init__(self):
+        self.episode_num = 0
+        self.player_id = ""
+        self.game_id = ""
         self.seeds = []
-        self.start = None
+        self.start_ts = None
         self.frames = []
+
+        self.action_count = 0  # Valid actions
+        self.input_count = 0  # Valid and invalid actions
 
     @property
     def board_height(self) -> int | None:
@@ -21,6 +27,8 @@ class GameFrameCollection:
         return self[0].board.shape[1] if len(self.frames) else None
 
     def add_frame(self, frame):
+        frame.action_count = self.action_count
+        frame.input_count = self.input_count
         self.frames.append(frame)
 
     def append(self, frame):
@@ -38,15 +46,18 @@ class GameFrameCollection:
 
 class GameFrame:
 
-    def __init__(self, board, mino: str):
-        self.board: np.ndarray = board
-        self.mino: str = mino
+    def __init__(self):
+        self.board: np.ndarray = None
+        self.intermediate_board: np.ndarray = None
+        self.mino: str = ""
         self.upcoming_minos = []
-        self.mino_rot = mino_rot
-        self.input_col = None
-        self.input_rot = None
+        self.action_col = None
+        self.action_rot = None
 
-    def store_board(self, board: np.ndarray):
+        self.action_count = 0  # How many actions since last action frame
+        self.input_count = 0  # How many inputs since last action frame
+
+    def copy_board(self, board: np.ndarray):
         self.board = board.copy()
 
 

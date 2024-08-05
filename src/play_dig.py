@@ -5,7 +5,13 @@ import random
 import sys
 import time
 
-from torch import dropout
+from tetrisml.playback import GameFrameCollection
+
+os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+# Must come after setting these vars
+import tensorflow as tf  # type: ignore
+
 import wandb
 from model import DQNAgent, DQNAgentConfig, TetrisCNN, TetrisCNNConfig
 from tetrisml.dig import DigBoard, DigEnv, DigEnvConfig
@@ -15,12 +21,6 @@ from tetrisml.tetrominos import Tetrominos
 
 from player import CheatingPlayer, RandomPlayer
 from config import Hyperparameters, TMLConfig, load_config, hp
-import utils
-
-os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
-os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
-# Must come after setting these vars
-import tensorflow as tf  # type: ignore
 
 assert len(tf.config.experimental.list_physical_devices("GPU")) == 0
 
@@ -29,6 +29,7 @@ config: TMLConfig = load_config()
 hp: Hyperparameters = Hyperparameters()
 
 hp.game.seed = config.model_id
+hp.model.dropout_rate = 0.0
 
 wandb_config = {
     "cfg": config,
@@ -39,7 +40,6 @@ wandb.init(
     config=wandb_config,
     name=config.run_id,
 )
-
 
 # Some config values are set at runtime
 hp.model.action_dim = hp.board.width * 4  # 4 mino rotations
@@ -97,37 +97,57 @@ def make_model_player(cfg: TMLConfig, hp: Hyperparameters) -> DQNAgent:
     return p
 
 
-# p = RandomPlayer()
+# e = TetrisEnv(Tetrominos.std_bag, 20, 10)
+# p = CheatingPlayer()
 
 if p is None:
     p = make_model_player(config, hp)
 sesh = PlaySession(e, p)
 
-data = {}
-data["training"] = {}
-data["eval"] = {}
-data["eval_from_load"] = {}
-
 import time
 
-start = time.time()
+start = config.unix_ts
+
 
 validation_game_seed = "whiff-adorn-1"  # hardcoded for this milestone
 
-while sesh.player.exploration_rate > 0.1:
+p: CheatingPlayer = sesh.player
+
+
+sesh.play_game(2)
+
+
+while p.exploration_rate > 0.1:
     sesh.play_game(100, render=False)
+    print()
+    print("Exploration rate:", p.exploration_rate)
+    print("Loss:", p.last_loss)
 
 print("Trained! Elapsed time:", time.time() - start)
+
+from game_vis import *
+
+sg: list[GameFrameCollection] = sesh.session_games
+for gi, g in enumerate(sg):
+    boards = []
+    for fi, f in enumerate(g):
+        if f.intermediate_board is not None:
+            boards.append(f.intermediate_board)
+        boards.append(f.board)
+
+    # create_board_image(boards).save(f"game-histogram-{gi+1}.png")
+
+
 time.sleep(0.3)
 
 
-p: DQNAgent = p
-save_path = os.path.join(config.model_storage_dir, f"{config.model_id}.pth")
-p.save_model(save_path)
-print(f"Model saved to {save_path}")
+# p: DQNAgent = p
+# save_path = os.path.join(config.model_storage_dir, f"{config.model_id}.pth")
+# p.save_model(save_path)
+# print(f"Model saved to {save_path}")
 
 
-p.load_model(save_path)
+# p.load_model(save_path)
 
 sys.exit()
 

@@ -17,6 +17,7 @@ from tetrisml.tetrominos import Tetrominos, TetrominoPiece
 from tetrisml.minos import MinoPlacement, MinoShape
 from tetrisml.board import TetrisBoard
 from tetrisml.logging import TetrisGameRecord
+from tetrisml.playback import GameFrameCollection, GameFrame
 
 from .base import CallbackHandler
 
@@ -51,7 +52,7 @@ class EnvStats:
         self.total_lines_cleared = 0
 
 
-class TetrisEnv(gym.Env):
+class TetrisEnv(BaseEnv):
 
     E_BEFORE_INPUT = "before_input"
     E_ACTION_COMMITED = "action_committed"
@@ -112,18 +113,18 @@ class TetrisEnv(gym.Env):
 
         return self._get_board_state()
 
-    def is_valid_action(self, action: ModelAction) -> tuple[bool, dict]:
+    def is_valid_action(self, ctx: ActionContext) -> tuple[bool, dict]:
         """
         action: tuple[int, int]
         """
-        col, rotation = action
+        col, rotation = ctx.player_action
         lcol = col + 1
 
         # ([0-9], [0-3])
         if lcol < 1 or lcol > self.board_width:
             return False, {"message": "Column out of bounds"}
 
-        pending_mino = MinoShape(self.current_mino.shape_id, action[1])
+        pending_mino = MinoShape(self.current_mino.shape_id, rotation)
 
         # An O piece on col 1 would occupy cols 1-2
         if lcol + pending_mino.width - 1 > self.board_width:
@@ -133,17 +134,24 @@ class TetrisEnv(gym.Env):
 
         return True, {}
 
-    # def on_before_input(self):
-    #     self.events.call(E_BEFORE_INPUT)
+    def on_before_input(self, ctx: ActionContext, p_ctx: ActionContext):
+        # self.events.call(E_BEFORE_INPUT)
+        pass
+
+    def on_action_commit(self, ctx: ActionContext):
+        pass
 
     def debug_output(self, placed_mino, lcoords):
         pass
 
-    def commit_action(self, action: ModelAction) -> tuple[bool, dict]:
+    def get_debug_dict(self) -> dict:
+        return {}
+
+    def commit_action(self, ctx: ActionContext) -> tuple[bool, dict]:
         """
         action: tuple[int, int]
         """
-        col, rotation = action
+        col, rotation = ctx.player_action
         done = False
 
         info = ActionFeedback()
@@ -169,7 +177,7 @@ class TetrisEnv(gym.Env):
         # If any of the top four rows were used -- Game Over
         if np.any(self.board.board[-4:]):
             # Game Over
-            done = True
+            ctx.ends_game = True
             reward = -1
 
             self.record.rewards.append(reward)
@@ -196,102 +204,11 @@ class TetrisEnv(gym.Env):
 
         return done, info
 
-    def step(self, action: ModelAction):
-        """
-        action: zero-indexed tuple of (column, rotation)
-        """
-        # ([0-9], [0-3])
-        col, rotation = action
-        lcol = col + 1
-
-        info = ActionFeedback()
-        mino = MinoShape(self.current_mino.shape_id, rotation)
-
-        # Clear the area above the visible board. If this range is used during
-        # piece placement, the game is over.
-        self.board.board[-4:].fill(0)
-
-        # Check for right-side overflow
-        # Given a horizontal I piece on col 0
-        # right_lcol would be 4. The piece would occupy lcolumns 1-4.
-        right_lcol = col + mino.width
-        if right_lcol > self.board_width:
-            # Ignore this action and try again.
-            #
-            # For example, a location is chosen which extends
-            # the piece over the edge of the board.
-            done = False
-            info.valid_action = False
-            self.record.invalid_moves += 1
-            reward = -1
-
-            return self._get_board_state(), reward, done, info
-
-        info.valid_action = True
-        lcoords = None
-
-        lcoords = self.board.find_logical_BL_coords(mino, col)
-        self.board.place_shape(mino, lcoords)
-
-        # self.events.call(E_MINO_SETTLED, mino, lcoords)
-
-        self.stats.total_placements += 1
-        self.record.moves += 1
-        self.record.boards.append(self.board.board.copy())
-        self.record.pieces.append(mino.get_piece().to_dict())
-        self.current_mino.rot = 0
-
-        self.record.placements.append(lcoords)
-
-        # If any of the top four rows were used -- Game Over
-        if np.any(self.board.board[-4:]):
-            # Game Over
-            done = True
-            reward = -1
-
-            self.record.rewards.append(reward)
-            self.record.cumulative_reward += reward
-            self.reward_history.append(reward)
-
-            self.close_episode()
-
-            return self._get_board_state(), reward, done, info
-
-        # reward = self.board_height - lcoords[0]
-
-        reward = self.calculate_reward()
-        done = False
-
-        if reward < 1:
-            reward = -1
-
-        done = True
-
-        self.record.rewards.append(reward)
-        self.record.cumulative_reward += reward
-        self.reward_history.append(reward)
-
-        # If any lines are full
-        line_clear = np.any([sum(x) == self.board_width for x in self.board.board])
-
-        # if line_clear:
-        # TODO Send the board before and after the clears
-        # self.events.call(E_LINE_CLEAR)
-
-        # Huzzah!
-        lines_gone = self.board.remove_tetris()
-        if lines_gone > 0:
-            self.record.cleared_by_size[lines_gone] += 1
-
-        self.stats.total_lines_cleared += lines_gone
-        self.record.lines_cleared += lines_gone
-
-        # Prep for next move
+    def post_commit(self, ctx: ActionContext):
         self.current_mino = self._get_random_piece()
 
-        print(f"[step] Current Mino is {self.current_mino}")
-        next_board_state = self._get_board_state()
-        return next_board_state, reward, True, info
+    def step(self, action: ModelAction):
+        raise NotImplementedError("why did you delete this")
 
     def close_episode(self):
         """
@@ -406,6 +323,8 @@ class PlaySession:
         self.episode_num: int = 0
         self.committed_action_num: int = 0
 
+        self.session_games = []
+
     def _render_dict(self, indent: str, d: dict):
         ret = []
         for k, v in d.items():
@@ -476,25 +395,32 @@ class PlaySession:
         self.env.board.do_instrumentation(self.env)
 
         for e in range(episodes):
-
             self.episode_num += 1
+
+            game_frames = GameFrameCollection()
+            game_frames.episode_num = self.episode_num
+
+            frame = GameFrame()
+            frame.copy_board(self.env.board.board)
+            game_frames.add_frame(frame)
+
             self.committed_action_num = 0
 
             self.env.reset()
             last_context = None
-
             self.player.on_episode_start(self.env)
 
             while True:
                 ctx = ActionContext()
                 ctx.session = self
-                player_data = None
+                frame = GameFrame()
 
                 self.env.on_before_input(ctx, last_context)
                 del last_context
 
                 while ctx.valid_action is not True:
                     ctx.player_action = self.player.play(self.env)
+                    game_frames.input_count += 1
                     ctx.valid_action, info = self.env.is_valid_action(ctx)
                     # ctx.ends_game = self.env.is_episode_over(ctx)
 
@@ -502,12 +428,16 @@ class PlaySession:
                         # self.env.recover_from_invalid_action(ctx, info)
                         self.player.on_invalid_input(ctx)
 
+                game_frames.action_count += 1
+
                 ###
                 # Ready to commit user input
                 ###
 
                 self.env.commit_action(ctx)
                 self.committed_action_num += 1
+
+                frame.board = self.env.board.export_board()
 
                 self.player.on_action_commit(self.env, ctx, ctx.player_ctx)
                 self.env.on_action_commit(ctx)
@@ -518,7 +448,7 @@ class PlaySession:
 
                 wandb.log(
                     {
-                        "episode": e + 1,
+                        "episode": self.episode_num,
                         "action": self.committed_action_num,
                         "reward": self.env.calculate_reward(),
                         "player": p_dict,
@@ -531,8 +461,16 @@ class PlaySession:
                 else:
                     print(".", end="")
 
+                full_rows = self.env.board.count_full_rows()
+
                 self.env.post_commit(ctx)
                 # self.player.on_post_commit(ctx)
+
+                if full_rows:
+                    frame.intermediate_board = self.env.board.export_board()
+                    self.board = self.env.board.export_board()
+
+                game_frames.append(frame)
 
                 # After board clean-up, clear the placement data so that it isn't
                 # used to highlight board placements on rows that have been cleared.
@@ -546,5 +484,6 @@ class PlaySession:
 
             # Game Over
             self.player.on_episode_end(self.env)
+            self.session_games.append(game_frames)
 
         self.env.on_session_end()
