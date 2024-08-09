@@ -5,6 +5,8 @@ import sys
 import time
 from datetime import datetime
 
+from tetrisml.display import GridRenderConfig, GridRenderer
+
 
 class GameFrameCollection:
     def __init__(self):
@@ -13,7 +15,7 @@ class GameFrameCollection:
         self.game_id = ""
         self.seeds = []
         self.start_ts = None
-        self.frames = []
+        self.frames: list[GameFrame] = []
 
         self.action_count = 0  # Valid actions
         self.input_count = 0  # Valid and invalid actions
@@ -49,10 +51,10 @@ class GameFrame:
     def __init__(self):
         self.board: np.ndarray = None
         self.intermediate_board: np.ndarray = None
-        self.mino: str = ""
-        self.upcoming_minos = []
+        self.mino_queue: list[int] = []
         self.action_col = None
         self.action_rot = None
+        self.lines_cleared = 0
 
         self.action_count = 0  # How many actions since last action frame
         self.input_count = 0  # How many inputs since last action frame
@@ -60,6 +62,13 @@ class GameFrame:
     def copy_board(self, board: np.ndarray):
         self.board = board.copy()
 
+    def show_boards(self):
+        if self.board is not None:
+            print("Board:")
+            GridRenderer().render(self.board)
 
-gfc = GameFrameCollection()
-print("done")
+        if self.intermediate_board is not None:
+            print("Intermediate Board:")
+            GridRenderer().render(self.intermediate_board)
+
+        print("=====================================")

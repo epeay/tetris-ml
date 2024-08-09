@@ -6,7 +6,7 @@ import random
 import sys
 
 from setup import before_tensorflow  # fmt:skip
-before_tensorflow()
+# before_tensorflow()
 import tensorflow as tf  # type: ignore
 
 from setup import make_model_player
@@ -29,18 +29,7 @@ import utils
 import time
 
 
-def set_seed(seed):
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    np.random.seed(seed)
-    random.seed(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-    tf.random.set_seed(seed)
-
-
-# set_seed(42)
+model_file_name = "240807-stout-table.pth"
 
 
 def run_eval():
@@ -81,7 +70,7 @@ def run_eval():
     ### Config finalized
 
     model: TetrisCNN = load_model_from_file(
-        os.path.join(config.model_storage_dir, "240804-clean-stone.pth"), mc
+        os.path.join(config.model_storage_dir, model_file_name), mc
     )
     p = ModelPlayer(model)
     e = DigEnv(dc)

@@ -1,8 +1,8 @@
 # Everything must go
 
-from .tetrominos import *
-from .board import *
-from .minos import *
-from .env import *
-from .logging import *
-from .base import *
+from tetrisml.tetrominos import *
+from tetrisml.board import *
+from tetrisml.minos import *
+from tetrisml.env import *
+from tetrisml.tetris_logging import *
+from tetrisml.base import *

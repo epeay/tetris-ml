@@ -1,10 +1,13 @@
+# The name "logging" conflicts with another module name, so I'm
+# using "tetris_logging" instead.
+
 import datetime
 import time
 import random
 
 from datetime import datetime
 
-from .minos import MinoPlacement
+from tetrisml.minos import MinoPlacement
 
 
 class TetrisGameRecord:

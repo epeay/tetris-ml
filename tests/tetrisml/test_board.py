@@ -22,6 +22,40 @@ def test_from_ascii():
     assert np.array_equal(board.board, expected)
 
 
+def test_from_ascii_docstring():
+    ascii = """
+        X X
+         X
+        XXX
+    """
+
+    board = TetrisBoard.from_ascii(ascii)
+    expected = np.array([[1, 1, 1], [0, 1, 0], [1, 0, 1]])
+    assert np.array_equal(board.board, expected)
+
+    # Wider representation that looks better
+    ascii = """
+        X   X
+          X
+        X X X
+    """
+
+    board = TetrisBoard.from_ascii(ascii)
+    expected = np.array([[1, 1, 1], [0, 1, 0], [1, 0, 1]])
+    assert np.array_equal(board.board, expected)
+
+    # Don't "slim" the representation if the spacing isn't uniform
+    ascii = """
+        X   X
+          X
+        X XXX
+    """
+
+    board = TetrisBoard.from_ascii(ascii)
+    expected = np.array([[1, 0, 1, 1, 1], [0, 0, 1, 0, 0], [1, 0, 0, 0, 1]])
+    assert np.array_equal(board.board, expected)
+
+
 def test_find_logical_BL_coords():
     ascii = [  # fmt: skip
         "X X",

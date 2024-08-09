@@ -15,7 +15,7 @@ from .env import ActionFeedback, TetrisEnv
 from .tetrominos import Tetrominos
 from .minos import MinoShape
 from .env import MinoBag
-from .base import BaseBag, BaseEnv, ContextPlacement, ModelAction
+from .base import BaseBag, BaseEnv, ContextPlacement, EpisodeContext, ModelAction
 import random
 import numpy as np
 
@@ -44,6 +44,7 @@ class DigEnvConfig:
     board_height: int = 20
     board_width: int = 10
     seed: Any = None
+    solution_depth: int = 1
 
 
 class DigEnv(BaseEnv):
@@ -53,13 +54,15 @@ class DigEnv(BaseEnv):
         self.board_width = config.board_width
         self.seed = config.seed
         self.rng = random.Random(self.seed)
+        self.solution_depth = config.solution_depth
 
         self.board = DigBoard(
             np.zeros((self.board_height, self.board_width), dtype=int),
             self.board_height,
             seed=self.seed,
+            solution_depth=self.solution_depth,
         )
-        self.bag = DigBag()
+        # self.bag = DigBag()
         self.stats_table = DataFrame(
             columns=[
                 "Shape",
@@ -71,8 +74,16 @@ class DigEnv(BaseEnv):
             ]
         )
 
+    @property
+    def current_mino(self) -> MinoShape:
+        return self.get_current_mino()
+
+    @property
+    def mino_queue(self) -> deque[int]:
+        return [x.shape_id for x in self.board.mino_queue]
+
     def reset(self):
-        pass
+        self.board.setup()
 
     def step(self, action):
         pass
@@ -115,7 +126,11 @@ class DigEnv(BaseEnv):
 
     def get_debug_dict(self) -> dict:
         return {
-            "current_mino": Tetrominos.shape_name(self.get_current_mino().shape_id),
+            "queue": (
+                ", ".join(
+                    [Tetrominos.shape_name(x.shape_id) for x in self.board.mino_queue]
+                )
+            ),
             "reward": self.calculate_reward(),
             "seed": self.board.seed,
         }
@@ -124,11 +139,12 @@ class DigEnv(BaseEnv):
         return self.get_debug_dict()
 
     def on_before_input(self, ctx: ActionContext, p_ctx: ActionContext):
-        self.board.setup()
-
-        # TODO Store board state in context
+        pass
 
     def on_action_commit(self, ctx: ActionContext):
+        pass
+
+    def on_episode_end(self, ctx: ActionContext, e_ctx: EpisodeContext):
         pass
 
     def on_session_end(self):
@@ -153,12 +169,12 @@ class DigEnv(BaseEnv):
         if lcol < 1 or lcol > self.board_width:
             return False, {"message": "Column out of bounds"}
 
-        pending_mino = MinoShape(self.current_mino.shape_id, rotation)
+        pending_mino = MinoShape(self.get_current_mino().shape_id, rotation)
 
         # An O piece on col 1 would occupy cols 1-2
         if lcol + pending_mino.width - 1 > self.board_width:
             return False, {
-                "message": f"Piece {self.current_mino} at {lcol} overflows the board"
+                "message": f"Piece {self.get_current_mino()} at {lcol} overflows the board"
             }
 
         return True, {}
@@ -221,9 +237,11 @@ class DigEnv(BaseEnv):
             ctx.intermediate_board = self.board.export_board()
 
         ctx.lines_cleared = self.board.remove_tetris()
+        ctx.final_board = self.board.export_board()
 
-        # For now, the game only has one board
-        ctx.ends_game = True
+        self.board.mino_queue.popleft()
+        if not len(self.board.mino_queue):
+            ctx.ends_game = True
 
         # TODO This will need refining
         # if ctx.lines_cleared != 2:
@@ -241,13 +259,18 @@ class DigBoardSolution:
 
 
 class DigBoard(TetrisBoard):
-    def __init__(self, matrix: np.ndarray, height: int, seed=None):
+    """
+    Represents a single puzzle of Dig.
+    """
+
+    def __init__(self, matrix: np.ndarray, height: int, seed=None, solution_depth=1):
         super().__init__(matrix, height)
         self.seed = seed
         self.rng = random.Random(seed)
+        self.solution_depth = solution_depth
 
         # Because this is a puzzle game, the board dictates the mino queue.
-        self.mino_queue = deque()
+        self.mino_queue = deque(maxlen=solution_depth)
 
         self.env = None
 
@@ -319,7 +342,9 @@ class DigBoard(TetrisBoard):
             (Tetrominos.S, 1),
             (Tetrominos.Z, 1),
             (Tetrominos.J, 1),
+            (Tetrominos.J, 2),
             (Tetrominos.L, 2),
+            (Tetrominos.L, 3),
             (Tetrominos.T, 1),
             (Tetrominos.T, 3),
         ]
@@ -327,29 +352,46 @@ class DigBoard(TetrisBoard):
         self.solution = []
 
         # Pick a winning placement, and construct a board, for that placement.
-        chosen_config = self.rng.choice(allowed_configurations)
+        chosen_config = []
+        for _ in range(self.solution_depth):
+            chosen_config.append(self.rng.choice(allowed_configurations))
 
-        # Place the mino on the board, in a random column
-        mino = MinoShape(chosen_config[0], chosen_config[1])
-        col_range = self.width - mino.width + 1
-        col = self.rng.randint(1, col_range)
+        chosen_minos = [MinoShape(x[0], x[1]) for x in chosen_config]
+        total_width = sum([x.width for x in chosen_minos])
+        if total_width > self.width:
+            # Shouldn't happen until solution depth is >= 3
+            raise ValueError("The chosen minos are too wide for the board")
 
-        shape_name = Tetrominos.shape_name(chosen_config[0])
-        self.solution.append(DigBoardSolution(shape_name, chosen_config[1], col))
+        # Determine the buffer space between the minos
+        buffers = []
+        remaining_width = self.width - total_width
+        for mi, mino in enumerate(chosen_minos):
+            buf = self.rng.randint(0, remaining_width)  # inclusive
+            buffers.append(buf)
+            remaining_width -= buf
 
+        # Place the minos on the board
         stage_board = TetrisBoard(np.zeros((4, self.width), dtype=int), 4)
-        stage_board.place_shape(mino, (1, col))
+        placement_i = 1
+        for mi, mino in enumerate(chosen_minos):
+            placement_i += buffers[mi]
+            stage_board.place_shape(mino, (1, placement_i))
+            placement_i += mino.width
+
+            shape_name = Tetrominos.shape_name(mino.shape_id)
+            self.solution.append(
+                DigBoardSolution(shape_name, mino.shape_rot, placement_i)
+            )
 
         # Invert board values, 0 -> 1, 1 -> 0
         stage_board.board = np.logical_not(stage_board.board).astype(int)
 
         # Prep the real board for the user
         self.board.fill(0)
-
         self.board[0:2] = stage_board.board[0:2]
 
-        if self.env is not None:
-            self.env.current_mino = MinoShape(chosen_config[0], 0)
-
+        # For this kind of solution, the mino placement order doesn't matter
+        self.rng.shuffle(self.solution)
         self.mino_queue.clear()
-        self.mino_queue.append(MinoShape(chosen_config[0], 0))
+        for m in self.solution:
+            self.mino_queue.append(MinoShape(m.shape, m.rotation))

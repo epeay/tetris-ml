@@ -43,3 +43,15 @@ class ActionTracker:
             "actions": self.to_dict(),
         }
         wandb.log(log)
+
+
+class MemoryRecorder:
+    """
+    Records memories to a flat file for later replaying
+    """
+
+    def __init__(self):
+        self.memories = []
+
+    def record(self, memory):
+        self.memories.append(memory)

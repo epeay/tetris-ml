@@ -1,12 +1,14 @@
 from ast import Call
 from collections import deque
+from dataclasses import dataclass, field
 from typing import NewType
 import gymnasium as gym
 
 from numpy import ndarray
 import numpy as np
 
-from .minos import MinoShape
+from tetrisml.minos import MinoShape
+from tetrisml.playback import GameFrameCollection
 
 ModelAction = NewType("ModelAction", tuple[int, int])
 
@@ -26,6 +28,14 @@ class BaseBag(deque):
 
     def peek(length: int = None) -> int:
         raise NotImplementedError(f"peek() must be implemented by subclass")
+
+
+@dataclass
+class EpisodeContext:
+    accurate: bool = True
+    game_over: bool = False
+    lines_cleared: int = 0
+    game_frames: GameFrameCollection = field(default_factory=GameFrameCollection)
 
 
 class ActionContext:
@@ -80,6 +90,10 @@ class BaseEnv(gym.Env):
 
     def get_current_mino(self) -> MinoShape:
         raise NotImplementedError("get_current_mino() must be implemented by subclass")
+
+    @property
+    def mino_queue(self) -> deque[int]:
+        raise NotImplementedError("mino_queue() must be implemented by subclass")
 
     def reset(self, *args, **kwargs):
         raise NotImplementedError("reset() must be implemented by subclass")
@@ -172,7 +186,7 @@ class BasePlayer:
     def on_episode_start(self, e: BaseEnv):
         pass
 
-    def on_episode_end(self, e: BaseEnv):
+    def on_episode_end(self, ctx: ActionContext, e_ctx: EpisodeContext, e: BaseEnv):
         pass
 
     def on_invalid_input(self, ctx: ActionContext):

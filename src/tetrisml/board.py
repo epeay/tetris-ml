@@ -1,5 +1,6 @@
 import numpy as np
 import os
+import textwrap
 
 from numpy import ndarray as NDArray
 
@@ -12,9 +13,9 @@ class TetrisBoard(BaseBoard):
 
     BLOCK = "▆"
 
-    def __init__(self, matrix: NDArray, height):
+    def __init__(self, matrix: NDArray, height=None):
         super().__init__(matrix, height)
-        self.play_height = height
+        self.play_height = height if height is not None else matrix.shape[0]
         self.board: NDArray = np.array(matrix)
 
     def reset(self):
@@ -130,11 +131,28 @@ class TetrisBoard(BaseBoard):
         return (place_row, col + 1)
 
     @staticmethod
-    def from_ascii(ascii: list[str], h: int = None, w: int = None):
+    def from_ascii(ascii: list[str] | str, h: int = None, w: int = None):
         """
         Create a TetrisBoard object from an ASCII representation of a board.
         This is an important method for bootstrapping tests.
         """
+
+        if isinstance(ascii, str):
+            ascii = ascii.strip("\n").rstrip()
+            ascii = textwrap.dedent(ascii).split("\n")
+
+        # Slim down wider ascii representstions
+        # X   X      X X
+        # X X    ==> XX
+        # X X X      XXX
+        slim: list[str] = []
+        for row in ascii:
+            if any([x for x in row[1::2] if x != " "]):
+                break
+            slim.append(row[::2])
+
+        if len(slim) == len(ascii):
+            ascii = slim
 
         ascii = ascii[::-1]
         space_chars = ("_", " ", ".", "0")
@@ -255,8 +273,7 @@ class TetrisBoard(BaseBoard):
 
 def calculate_reward(board: NDArray) -> float:
     tower_height = 0
-    h = board.shape[0]
-    w = board.shape[1]
+    (h, w) = board.shape
 
     line_pack = []
     clears = 0

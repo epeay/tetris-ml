@@ -19,50 +19,146 @@ import os
 import observer
 from player import BasePlayer
 
-from tetrisml.base import ActionContext, BaseEnv
+from tetrisml.base import ActionContext, BaseEnv, EpisodeContext
 import utils
 from tetrisml import TetrisEnv, TetrisGameRecord, EnvStats, ModelAction, MinoShape
 from tetrisml import Tetrominos
+from tetrisml.display import GridRenderer, GridRenderConfig
+from tetrisml.playback import GameFrame
+import tetrisml.board
 
 device = torch.device("cpu")
 print(f"Using device {device}")
 
 
 class ModelState:
-    def __init__(self, board: NDArray):
+    """
+    Represents one state of the game board, exported for storage in the
+    replay buffer, or flat file.
+    """
+
+    def __init__(self, board: NDArray, one_hot_width: int = None):
 
         if len(board.shape) != 2:
             raise ValueError("Board must be 2D")
 
         self.board: NDArray = board
         # One-hot encoding of the current mino
-        self.mino: NDArray = None
+        # self.mino: NDArray = None
+
+        self.one_hot_width: int | None = one_hot_width
+        self.mino_queue_ids: list[int] = []
+
+    @property
+    def mino(self) -> MinoShape | None:
+        if len(self.mino_queue_ids) == 0:
+            return None
+
+        return MinoShape(self.mino_queue_ids[0])
+
+    def set_upcoming_minos(self, mino_queue: list[int | MinoShape]):
+        self.mino_queue_ids = []
+
+        for m in mino_queue:
+            if isinstance(m, MinoShape):
+                self.mino_queue_ids.append(m.shape_id)
+            else:
+                self.mino_queue_ids.append(m)
+
+    def get_upcoming_minos(self) -> list[int]:
+        return self.mino_queue_ids
 
     def set_mino_one_hot(self, total: int, index: int):
         """
-        param index must be zero-indexed
+        Deprecated. Use set_upcoming_minos.
         """
-        self.mino = np.zeros(total)
-        self.mino[index] = 1
+        print("Deprecated. Use set_upcoming_minos")
+        return self.set_upcoming_minos([index])
+
+    def read_mino_one_hot(self) -> int:
+        print("Deprecated. Use get_upcoming_minos")
+
+    def get_one_hot_data(self, width: int = None) -> NDArray:
+        """
+        Returns the mino one-hot encoding as a 1D array.
+        """
+
+        if width is not None:
+            self.one_hot_width = width
+
+        width = self.one_hot_width
+
+        if self.one_hot_width is None:
+            raise ValueError("One-hot width is not set")
+
+        if len(self.mino_queue_ids) == 0:
+            raise ValueError("Mino queue is empty")
+
+        if max(self.mino_queue_ids) >= width:
+            raise ValueError("One-hot width is too small")
+
+        one_hots = []
+
+        for m in self.mino_queue_ids:
+            oh = np.zeros(width)
+            oh[m] = 1
+            one_hots.append(oh)
+
+        return np.array(one_hots).flatten()
 
     def to_dict(self):
-        return {"board": self.board.tolist(), "mino": self.mino.tolist()}
+        return {"board": self.board.tolist(), "upcoming": self.mino_queue_ids}
 
-    def get_linear_data(self) -> list[int]:
-        if self.mino is None:
-            raise ValueError("Mino one-hot encoding not set")
+    def get_linear_data(self, width: int = None) -> list[int]:
+        return self.get_one_hot_data(width).tolist()
 
-        return self.mino.tolist()
+    def __repr__(self):
+        pct_full = np.count_nonzero(self.board) / self.board.size
 
-    def to_tensor(self) -> torch.FloatTensor:
-        board_tensor = torch.FloatTensor(self.board)
-        linear_data_tensor = torch.FloatTensor(self.get_linear_data())
-        return board_tensor, linear_data_tensor
+        queue_str = "<empty>"
+
+        if len(self.mino_queue_ids) > 0:
+            queue_str = ", ".join(
+                [Tetrominos.shape_name(i) for i in self.mino_queue_ids]
+            )
+
+        GridRenderer.for_repr(self.board, self)
+        return f"ModelState(board={pct_full:.2%} full), upcoming={queue_str})"
+
+    def import_one_hots(self, one_hots: NDArray, width: int):
+        """
+        Unpacks linear data into a list of mino IDs. Overwrites the
+        current mino queue.
+        """
+        if len(one_hots) % width != 0:
+            raise ValueError("One-hots are not a multiple of the board width")
+
+        items = len(one_hots) // width
+        queue_ids = []
+        for i in range(items):
+            oh = one_hots[i * width : (i + 1) * width]
+            if sum(oh) > 1:
+                raise ValueError(f"One-hot encoding is not valid {oh}")
+            elif sum(oh) == 1:
+                queue_ids.append(np.argmax(oh))
+            else:
+                rest_of_data = one_hots[i * width :]
+                if sum(rest_of_data) > 0:
+                    raise ValueError(
+                        f"Empty one-hot is followed by non-empty data {rest_of_data}"
+                    )
+                break
+
+        self.mino_queue_ids = queue_ids
 
     @staticmethod
     def from_dict(d: dict):
+        """
+        num_tetrominos: The number of unique tetrominos in the game.
+        """
         ret = ModelState(np.array(d["board"]))
-        ret.mino = np.array(d["mino"])
+        ret.mino_queue_ids = d["upcoming"]
+
         return ret
 
 
@@ -109,6 +205,8 @@ class TetrisCNN(nn.Module):
         """
         super().__init__()
 
+        self.linear_data_dim = config.linear_layer_input_dim
+
         if config.model_id is None:
             raise ValueError("Model ID must be set")
 
@@ -134,6 +232,14 @@ class TetrisCNN(nn.Module):
 
         self.intermediate_data = {}
         self.intermediate_gradients = {}
+
+    def extend_linear_data(self, data: NDArray) -> NDArray:
+        width = self.linear_data_dim
+        # Pad the end with zeros
+        if len(data) < width:
+            data = np.pad(data, (0, width - len(data)), "constant")
+
+        return data
 
     def forward(self, x_0, linear_layer_input=torch.tensor([])):
         # Expects board input shape (batch_size, channels, height, width)
@@ -176,6 +282,14 @@ class AgentGameInfo:
         self.batch_size = None
 
 
+@dataclass
+class StoredModelMeta:
+    model_id: str
+    board_height: int
+    board_width: int
+    unix_ts: int
+
+
 class ModelCheckpoint(dict):
     def __init__(self):
         self.model_state: dict = None
@@ -184,6 +298,7 @@ class ModelCheckpoint(dict):
         self.replay_buffer: deque = None
         self.exploration: float = None
         self.episode: int = None
+        self.meta: StoredModelMeta = None
 
     def __setattr__(self, key, value):
         """Class properties become dict key/value pairs"""
@@ -227,6 +342,11 @@ class ModelParams(dict):
         super().__setattr__(key, value)
 
 
+class ReplayBuffer(deque):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+
 @dataclass
 class DQNAgentConfig:
     # fmt: off
@@ -265,6 +385,9 @@ class DQNAgent(BasePlayer):
         self.exploration_rate = config.exploration_rate
         self.exploration_decay = config.exploration_decay
         self.min_exploration_rate = config.min_exploration_rate
+        self.board_height = config.board_height
+        self.board_width = config.board_width
+
         self.replay_buffer = deque(maxlen=config.replay_buffer_size)
         self.batch_size = config.batch_size
         self.reset_key = None
@@ -272,9 +395,6 @@ class DQNAgent(BasePlayer):
         # Show board state just before sending to model
         self.see_model_view = False
         self.mode = DQNAgent.MODE_UNSET
-
-        self.board_height = config.board_height
-        self.board_width = config.board_width
 
         self.pending_memory = ModelMemory()
         self.replays_counter = 0
@@ -292,7 +412,6 @@ class DQNAgent(BasePlayer):
 
         self.model = model
         self.target_model = target_model
-
         self.update_target_model()
 
         self.optimizer = optim.Adam(self.model.parameters(), lr=config.learning_rate)
@@ -302,6 +421,8 @@ class DQNAgent(BasePlayer):
         self.writer = (
             SummaryWriter(config.log_dir) if config.log_dir is not None else None
         )
+
+        self.episode_memories = []
 
         self.agent_episode_count = 0
 
@@ -465,7 +586,8 @@ class DQNAgent(BasePlayer):
         while len(board.shape) < 4:
             board = board.unsqueeze(0)
 
-        linear_data = torch.FloatTensor(state.get_linear_data())
+        linear_data = self.model.extend_linear_data(state.get_linear_data())
+        linear_data = torch.FloatTensor(linear_data)
         # while len(linear_data.shape) < 3:
         #     linear_data = linear_data.unsqueeze(0)
 
@@ -484,9 +606,33 @@ class DQNAgent(BasePlayer):
             return action_index, True
 
     def make_model_state(self, e: BaseEnv) -> ModelState:
-        state = ModelState(e.board.export_board())
-        state.set_mino_one_hot(Tetrominos.get_num_tetrominos(), e.current_mino.shape_id)
+        state = ModelState(
+            e.board.export_board(), one_hot_width=Tetrominos.get_num_tetrominos()
+        )
+        state.set_upcoming_minos(e.mino_queue)
         return state
+
+    def make_state_from_frame(self, frame: GameFrame) -> ModelState:
+        state = ModelState(frame.board, one_hot_width=Tetrominos.get_num_tetrominos())
+        state.set_upcoming_minos(frame.mino_queue)
+        return state
+
+    def make_memory_from_frame(
+        self, frame: GameFrame, next_frame: GameFrame | None = None
+    ) -> ModelMemory:
+        ret = ModelMemory()
+        state = self.make_state_from_frame(frame)
+        ret.state = state
+        ret.action = (frame.action_col, frame.action_rot)
+        ret.next_state = None
+        ret.done = True
+        if next_frame is not None:
+            ret.next_state = self.make_state_from_frame(next_frame)
+            ret.done = False
+
+        ret.reward = tetrisml.board.calculate_reward(ret.state.board)
+
+        return ret
 
     def play(self, env: BaseEnv) -> ModelAction:
 
@@ -496,7 +642,7 @@ class DQNAgent(BasePlayer):
         self.pending_memory = ModelMemory()
 
         curr_state = self.make_model_state(env)
-        action, is_prediction = self.choose_action(curr_state, env.current_mino)
+        action, is_prediction = self.choose_action(curr_state, env.get_current_mino())
 
         lai["shape_name"] = Tetrominos.shape_name(env.get_current_mino().shape_id)
         lai["column"] = action[0]
@@ -527,17 +673,8 @@ class DQNAgent(BasePlayer):
 
         next_state = self.make_model_state(env)
         self.pending_memory.next_state = next_state
-
         reward = env.calculate_reward()
         self.pending_memory.reward = reward
-
-        # Update Action Stats
-        correct = reward == 2
-        modality = "predict" if self.last_action_info["is_prediction"] else "guess"
-        outcome_str = "correct" if correct else "incorrect"
-        self.action_stats[modality][outcome_str] += 1
-        self.action_stats[modality]["total"] += 1
-
         self.pending_memory.done = ctx.ends_game
         memory = self.pending_memory.to_tuple()
         self.remember(*memory)
@@ -603,11 +740,19 @@ class DQNAgent(BasePlayer):
 
     def on_episode_start(self, env: BaseEnv):
         self.agent_episode_count += 1
+        self.episode_memories = []
 
-    def on_episode_end(self, env: TetrisEnv):
-        loss = None
+    def on_episode_end(self, ctx: ActionContext, e_ctx: EpisodeContext, env: TetrisEnv):
+
+        correct = e_ctx.lines_cleared == 2
+
+        modality = "predict" if self.last_action_info["is_prediction"] else "guess"
+        outcome_str = "correct" if correct else "incorrect"
+        self.action_stats[modality][outcome_str] += 1
+        self.action_stats[modality]["total"] += 1
 
         # Should this be running every action? Every episode?
+        loss = None
         if self.train:
             loss = self.replay()
 
@@ -685,11 +830,25 @@ class DQNAgent(BasePlayer):
         composite_states = [ModelState.from_dict(s) for s in composite_states]
         composite_next_states = [ModelState.from_dict(s) for s in composite_next_states]
 
+        # set linear data dim
+        for s in composite_states:
+            s.linear_data_dim = self.model.linear_data_dim
+
         # Unpack composite states
         boards = [s.board for s in composite_states]
-        lds = [s.get_linear_data() for s in composite_states]
+        lds = [
+            self.model.extend_linear_data(
+                s.get_linear_data(Tetrominos.get_num_tetrominos())
+            )
+            for s in composite_states
+        ]
         n_boards = [s.board for s in composite_next_states]
-        n_lds = [s.get_linear_data() for s in composite_next_states]
+        n_lds = [
+            self.model.extend_linear_data(
+                s.get_linear_data(Tetrominos.get_num_tetrominos())
+            )
+            for s in composite_next_states
+        ]
 
         # Ensure all states have consistent shapes
         boards = np.array(boards)
@@ -770,7 +929,9 @@ class ModelPlayer(BasePlayer):
         TODO Duplicate code from DQNAgent. Cleanup.
         """
         state = ModelState(e.board.export_board())
-        state.set_mino_one_hot(Tetrominos.get_num_tetrominos(), e.current_mino.shape_id)
+        state.set_mino_one_hot(
+            Tetrominos.get_num_tetrominos(), e.get_current_mino().shape_id
+        )
         return state
 
     def get_debug_dict(self):

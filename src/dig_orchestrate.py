@@ -23,7 +23,7 @@ wandb.require("core")
 config: TMLConfig = load_config()  # Generates run id
 hp: Hyperparameters = Hyperparameters()
 hp.model.action_dim = hp.board.width * 4  # 4 mino rotations
-hp.model.linear_data_dim = Tetrominos.get_num_tetrominos()
+hp.model.linear_data_dim = 4 * Tetrominos.get_num_tetrominos()
 hp.game.seed = config.model_id
 hp.model.dropout_rate = 0.0
 
@@ -40,9 +40,46 @@ e = DigEnv(
         board_height=hp.board.height,
         board_width=hp.board.width,
         seed=hp.game.seed,
-        solution_depth=1,
+        solution_depth=2,
     )
 )
+
+
+sesh = PlaySession(e, CheatingPlayer())
+sesh.play_game(100)
+
+import tetrisml.board
+
+winner = 0
+total = 0
+
+for g in sesh.session_games:
+    total += 1
+    last_frame = g.frames[-1]
+    if last_frame.intermediate_board is not None:
+        last_reward = tetrisml.board.calculate_reward(last_frame.intermediate_board)
+        if last_reward == 2:
+            winner += 1
+
+
+print(f"Winner: {winner}/{total}")
+
+
+mp = setup.make_model_player(config, hp)
+mp: DQNAgent = mp
+
+
+game = sesh.session_games[20]
+
+memory = None
+if len(game.frames) > 2:
+    memory = mp.make_memory_from_frame(game.frames[1], game.frames[2])
+else:
+    memory = mp.make_memory_from_frame(game.frames[1])
+
+
+sys.exit()
+
 
 p = None
 

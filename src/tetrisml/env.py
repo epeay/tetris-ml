@@ -1,6 +1,8 @@
 import datetime
 from io import StringIO
 import sys
+from telnetlib import GA
+from flask import g
 import gymnasium as gym
 import numpy as np
 import time
@@ -16,10 +18,10 @@ from tetrisml.base import BaseBag, BaseEnv, ActionContext, BasePlayer, ModelActi
 from tetrisml.tetrominos import Tetrominos, TetrominoPiece
 from tetrisml.minos import MinoPlacement, MinoShape
 from tetrisml.board import TetrisBoard
-from tetrisml.logging import TetrisGameRecord
+from tetrisml.tetris_logging import TetrisGameRecord
 from tetrisml.playback import GameFrameCollection, GameFrame
 
-from .base import CallbackHandler
+from .base import CallbackHandler, EpisodeContext
 
 import numpy as np
 from numpy import ndarray
@@ -92,6 +94,9 @@ class TetrisEnv(BaseEnv):
         self.action_space = spaces.MultiDiscrete([self.board_width, 4])
 
         self.reset()
+
+    def get_current_mino(self) -> MinoShape:
+        return self.current_mino
 
     def reset(self, seed: int = None):
         self.board.reset()
@@ -323,7 +328,7 @@ class PlaySession:
         self.episode_num: int = 0
         self.committed_action_num: int = 0
 
-        self.session_games = []
+        self.session_games: list[GameFrameCollection] = []
 
     def _render_dict(self, indent: str, d: dict):
         ret = []
@@ -397,16 +402,19 @@ class PlaySession:
         for e in range(episodes):
             self.episode_num += 1
 
-            game_frames = GameFrameCollection()
-            game_frames.episode_num = self.episode_num
+            e_ctx = EpisodeContext()
+
+            e_ctx.game_frames = GameFrameCollection()
+            gfc = e_ctx.game_frames
+            gfc.episode_num = self.episode_num
+
+            self.committed_action_num = 0
+            self.env.reset()
 
             frame = GameFrame()
             frame.copy_board(self.env.board.board)
-            game_frames.add_frame(frame)
+            gfc.add_frame(frame)
 
-            self.committed_action_num = 0
-
-            self.env.reset()
             last_context = None
             self.player.on_episode_start(self.env)
 
@@ -418,9 +426,11 @@ class PlaySession:
                 self.env.on_before_input(ctx, last_context)
                 del last_context
 
+                frame.mino_queue = self.env.mino_queue
+
                 while ctx.valid_action is not True:
                     ctx.player_action = self.player.play(self.env)
-                    game_frames.input_count += 1
+                    gfc.input_count += 1
                     ctx.valid_action, info = self.env.is_valid_action(ctx)
                     # ctx.ends_game = self.env.is_episode_over(ctx)
 
@@ -428,7 +438,8 @@ class PlaySession:
                         # self.env.recover_from_invalid_action(ctx, info)
                         self.player.on_invalid_input(ctx)
 
-                game_frames.action_count += 1
+                gfc.action_count += 1
+                frame.action_col, frame.action_rot = ctx.player_action
 
                 ###
                 # Ready to commit user input
@@ -458,19 +469,20 @@ class PlaySession:
 
                 if render:
                     self.render()
-                else:
-                    print(".", end="")
 
                 full_rows = self.env.board.count_full_rows()
+                e_ctx.lines_cleared += full_rows
+                frame.lines_cleared = full_rows
+
+                frame.board = self.env.board.export_board()
+                if full_rows:
+                    frame.intermediate_board = frame.board
+                    frame.board = self.env.board.export_board()
 
                 self.env.post_commit(ctx)
                 # self.player.on_post_commit(ctx)
 
-                if full_rows:
-                    frame.intermediate_board = self.env.board.export_board()
-                    self.board = self.env.board.export_board()
-
-                game_frames.append(frame)
+                gfc.append(frame)
 
                 # After board clean-up, clear the placement data so that it isn't
                 # used to highlight board placements on rows that have been cleared.
@@ -480,10 +492,18 @@ class PlaySession:
                 last_context = ctx
 
                 if last_context.ends_game:
+                    e_ctx.game_over = True
                     break
 
+            if not render:
+                if e_ctx.lines_cleared == 2:
+                    print("!", end="")
+                else:
+                    print(".", end="")
+
             # Game Over
-            self.player.on_episode_end(self.env)
-            self.session_games.append(game_frames)
+            self.env.on_episode_end(ctx, e_ctx)
+            self.player.on_episode_end(ctx, e_ctx, self.env)
+            self.session_games.append(gfc)
 
         self.env.on_session_end()

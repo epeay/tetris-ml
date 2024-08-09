@@ -7,15 +7,30 @@ class MinoShape:
     Importantly, this class is meant to be immutable.
     """
 
-    def __init__(self, shape_id: int, rot: int = 0):
-        self.shape: list[list[int]] = Tetrominos.make(shape_id, rot).pattern
-        self.shape_id: int = shape_id
-        self.shape_rot: int = rot
-        self.height: int = len(self.shape)
-        self.width: int = len(self.shape[0])
+    def __init__(self, shape_id: int | str, rot: int = 0):
 
-        # Private
+        if isinstance(shape_id, str) and len(shape_id) == 1:
+            shape_num = Tetrominos.get_id_by_char(shape_id)
+            shape_letter = shape_id
+        elif isinstance(shape_id, int):
+            shape_num = shape_id
+            shape_letter = Tetrominos.shape_name(shape_id)
+        else:
+            raise ValueError(f"Invalid shape_id '{shape_id}'")
+
+        self.shape: list[list[int]] = Tetrominos.make(shape_num, rot).pattern
+        self.shape_id: int = shape_num
+        self.shape_rot: int = rot
+        self.letter: str = shape_letter
         self._bottom_gaps: list[int] = None
+
+    @property
+    def height(self):
+        return len(self.shape)
+
+    @property
+    def width(self):
+        return len(self.shape[0])
 
     def __str__(self):
         return f"MinoShape(shape={Tetrominos.shape_name(self.shape_id)}, rot={self.shape_rot}, pattern=[{self.printable_pattern(oneline=True)}])"

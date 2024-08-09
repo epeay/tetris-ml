@@ -1,7 +1,7 @@
 import json
 import random
 from tetrisml import MinoShape, TetrisEnv, BasePlayer
-from tetrisml.logging import GameHistory
+from tetrisml.tetris_logging import GameHistory
 from tetrisml.env import ModelAction
 from tetrisml.minos import MinoPlacement
 from cheating import find_possible_moves
@@ -44,7 +44,14 @@ class CheatingPlayer(BasePlayer):
                 best_reward = p.reward
                 highest_reward_choices = [p]
 
-        return self.rng.choice(highest_reward_choices)
+        self.rng.shuffle(highest_reward_choices)
+
+        # Further filter by gaps
+        highest_reward_choices = sorted(
+            highest_reward_choices, key=lambda x: sum(x.gaps), reverse=False
+        )
+
+        return highest_reward_choices[0]
 
 
 class RandomPlayer(BasePlayer):
