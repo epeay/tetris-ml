@@ -15,9 +15,9 @@ from tetrisml.minos import MinoShape
 
 @dataclass
 class GridRenderConfig:
-    filled: str = "▆"
-    empty: str = "_"
-    last_action: str = "X"
+    filled: str = "▆ "
+    empty: str = "_ "
+    last_action: str = "X "
     color: bool = False
     x_labels: bool = False
     y_labels: bool = False
@@ -30,20 +30,22 @@ class GridRenderer:
     def render(
         self,
         grid: np.ndarray,
-        last_mino_id: str = None,
-        last_action: tuple[int, int] = None,
+        last_mino_shape: MinoShape = None,
+        lcoords: tuple[int, int] = None,
     ):
 
         grid = grid.copy()
 
-        if last_mino_id is not None:
-            col, rot = last_action
-            mino = MinoShape(last_mino_id, rot)
-            lcol = col + 1
-            for i, row in enumerate(mino.shape):
-                for j, cell in enumerate(reversed(row)):
+        if last_mino_shape is not None:
+
+            origin_r = lcoords[0] - 1
+            origin_c = lcoords[1] - 1
+
+            mino = last_mino_shape.shape
+            for i, row in enumerate(reversed(mino)):
+                for j, cell in enumerate(row):
                     if cell == 1:
-                        grid[i, j + lcol] = 2
+                        grid[origin_r + i][origin_c + j] = 2
 
         assert grid.ndim == 2, "Grid must be a 2D array"
 
@@ -99,12 +101,7 @@ class GridRenderer:
     @staticmethod
     def quick_render(grid, **kwargs):
         config = GridRenderConfig(
-            x_labels=False,
             y_labels=True,
-            color=False,
-            filled="🟩",
-            empty="⬛",
-            last_action="🟨",
         )
         GridRenderer(config).render(grid, **kwargs)
 
@@ -134,14 +131,7 @@ class GridRenderer:
 if __name__ == "__main__":
 
     import sys
-
-    print("\n".join(sys.path))
-
-    import sys
     import os
-
-    # Add the parent directory to the system path
-    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
     from tetrisml.board import TetrisBoard
 
@@ -155,9 +145,9 @@ if __name__ == "__main__":
         h=20,
         w=10,
     )
-    mino = MinoShape("Z", 0)
+    mino = MinoShape("T", 0)
 
-    GridRenderer.quick_render(b.board, last_mino_id=mino.shape_id, last_action=(3, 0))
+    GridRenderer.quick_render(b.board, last_mino_shape=mino, lcoords=(3, 2))
 
     # c = GridRenderer()
     # c(b.board, mino.shape_id, (3, 0))

@@ -17,10 +17,10 @@ class Tetrominos:
 
     # fmt: off
     base_patterns = {
-        
+
         # X X
         # X X
-        O: np.array([[1, 1], 
+        O: np.array([[1, 1],
                      [1, 1]]),
 
         # X X X X
@@ -28,19 +28,19 @@ class Tetrominos:
 
         # _ X X
         # X X _
-        S: np.array([[0, 1, 1], 
+        S: np.array([[0, 1, 1],
                      [1, 1, 0]]),
 
-        Z: np.array([[1, 1, 0], 
+        Z: np.array([[1, 1, 0],
                      [0, 1, 1]]),
 
-        T: np.array([[1, 1, 1], 
+        T: np.array([[1, 1, 1],
                      [0, 1, 0]]),
 
-        J: np.array([[1, 0, 0], 
+        J: np.array([[1, 0, 0],
                      [1, 1, 1]]),
 
-        L: np.array([[0, 0, 1], 
+        L: np.array([[0, 0, 1],
                      [1, 1, 1]]),
 
         DOT: np.array([[1]]),

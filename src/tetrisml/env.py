@@ -1,3 +1,4 @@
+from argparse import Action
 import datetime
 from io import StringIO
 import sys
@@ -15,6 +16,7 @@ from gymnasium import spaces
 import wandb
 
 from tetrisml.base import BaseBag, BaseEnv, ActionContext, BasePlayer, ModelAction
+from tetrisml.display import GridRenderConfig, GridRenderer
 from tetrisml.tetrominos import Tetrominos, TetrominoPiece
 from tetrisml.minos import MinoPlacement, MinoShape
 from tetrisml.board import TetrisBoard
@@ -212,9 +214,6 @@ class TetrisEnv(BaseEnv):
     def post_commit(self, ctx: ActionContext):
         self.current_mino = self._get_random_piece()
 
-    def step(self, action: ModelAction):
-        raise NotImplementedError("why did you delete this")
-
     def close_episode(self):
         """
         Wraps up episode stats. Public method is available for agent to call
@@ -341,7 +340,7 @@ class PlaySession:
 
         return ret
 
-    def render(self):
+    def render(self, last_placement: MinoPlacement = None):
         """
         Produces a two column output. The left column is the board state. The
         right column is a debug output from the player and environment.
@@ -361,10 +360,20 @@ class PlaySession:
         """
         player = self.player.get_debug_dict()
         env = self.env.get_debug_dict()
+        gr = GridRenderer(GridRenderConfig())
+
+        ms = None
+        lcoords = None
+        if last_placement:
+            ms = last_placement.mino
+            lcoords = last_placement.coords
 
         buffer = StringIO()
         sys.stdout = buffer
-        self.env.board.render()
+
+        gr.render(self.env.board.board, ms, lcoords)
+
+        # self.env.board.render()
         sys.stdout = sys.__stdout__
         lhs = buffer.getvalue().split("\n")
         max_width = max([len(x) for x in lhs])
@@ -468,7 +477,7 @@ class PlaySession:
                 )
 
                 if render:
-                    self.render()
+                    self.render(last_placement=ctx.placement)
 
                 full_rows = self.env.board.count_full_rows()
                 e_ctx.lines_cleared += full_rows
